@@ -1,6 +1,6 @@
 # WNBA Prediction Market Model
 
-A calibrated sports forecasting and trading system for WNBA prediction markets on Kalshi. Built as both a **thesis-quality research project** and a **portfolio piece** demonstrating end-to-end ML pipeline design, rigorous evaluation methodology, and practical market application.
+A sports outcome forecasting and trading model for WNBA prediction markets on Kalshi, implementing Elo structural priors, Gradient-Boosted Trees with in-depth feature engineering, no look-ahead bias and practical market application.
 
 ---
 
@@ -17,7 +17,7 @@ Walk-forward cross-validation on 2020–2024 (development), with final holdout e
 | XGBoost (no Elo) | 0.6228 | 0.2165 | 65.1% | 0.6327 | 0.2188 | 66.8% |
 | Logistic Reg + Elo | 0.7322 | 0.2285 | 65.9% | 0.6684 | 0.2332 | 64.8% |
 
-The XGBoost + Elo model improves over the Elo baseline in both development (−0.28 log loss points) and on the untouched 2025 holdout (−0.30 points), with a consistent accuracy advantage. XGBoost without Elo is substantially worse, confirming the Elo-as-base-margin architecture.
+The XGBoost + Elo model improves over the Elo baseline in both development (−0.28 log loss points) and on the untouched 2025 holdout (−0.30 points), with a consistent accuracy advantage. XGBoost without Elo is substantially worse, confirming the Elo-as-base-margin architecture. Logistic regression has the worst performance of all models, confirming the importance of models learning non-linear relationships.
 
 Full model comparison, per-fold breakdowns, feature importance, and calibration diagnostics: [`notebooks/analysis/forecasting_results.ipynb`](notebooks/analysis/forecasting_results.ipynb).
 
@@ -69,7 +69,7 @@ A bootstrap comparison of per-trade log-returns (10K resamples) tests whether th
 | P(Full Model > Elo) | 0.647 |
 | Growth-rate difference 95% CI | [−0.033, +0.048] |
 
-With ~130–155 trades in a single season, the difference is directionally consistent but not statistically significant at conventional levels. Roughly 2–3 seasons of similar performance would be needed for significance. This is expected — the test is included for methodological honesty, not to claim certainty.
+With ~130–155 trades in a single season, the difference is directionally consistent but not statistically significant at conventional levels. Roughly 2–3 seasons of similar performance would be needed for significance.
 
 Full trading analysis: [`notebooks/analysis/trading_results2.ipynb`](notebooks/analysis/trading_results2.ipynb).
 
@@ -94,7 +94,7 @@ When the model and Kalshi disagree on the game direction (59 games), the model i
 
 ### Elo captures most of the signal
 
-The most striking result in the forecasting table is that XGBoost *without* Elo — using only player, form, style, and schedule features — achieves a dev log loss of 0.623, within 0.021 of the Elo-only baseline (0.602). These two models use completely different data sources and methodologies: Elo sees only game outcomes and margin of victory, while the features-only XGBoost sees player availability, box-score tendencies, rest patterns, and team style. The fact that they converge to similar performance suggests that Elo already encodes much of what matters — team strength is the dominant signal, and contextual features provide only a marginal correction.
+The most striking result in the forecasting table is that XGBoost *without* Elo — using only player, form, style, and schedule features — achieves a dev log loss of 0.623, within 0.021 of the Elo-only baseline (0.602). These two models use completely different data sources and methodologies: Elo sees only game outcomes and margin of victory, while the features-only XGBoost sees player availability, box-score tendencies, rest patterns, and team style. The fact that they converge to similar performance suggests that Elo already encodes much of what matters, team strength is the dominant signal, and contextual features provide only a marginal correction.
 
 This is further confirmed by feature importance. When XGBoost has no Elo base margin, it learns sensible structure: net rating EWMA and top-player quality (`p1_q`, `p2_q`) dominate importance, essentially reconstructing a team-strength signal from available data. When XGBoost *does* have Elo as a base margin, the remaining feature importance is scattered across low-level player slots (e.g., `home_p2_played_last_game`, `away_p5_days_since_last_played`) with no clear interpretable pattern — it is fitting noise around an already-strong prior. The logistic regression tells the same story: `base_margin` has a coefficient of 0.92 (nearly 1.0, meaning Elo is passed through almost unchanged), and the largest feature coefficients are schedule and player availability variables with modest magnitude.
 
