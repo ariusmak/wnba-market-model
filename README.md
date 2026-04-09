@@ -23,7 +23,7 @@ Full model comparison, per-fold breakdowns, feature importance, and calibration 
 
 ### Trading Performance (2025 Kalshi Backtest)
 
-Best configurations from a grid search over entry rules and position sizing, using half-life entry timing (~17h pre-tipoff) on Kalshi settlement markets.
+Best configurations from a grid search over entry rules and position sizing, using half-life entry timing (~17h pre-tipoff) on Kalshi settlement markets. Drawdowns are assuming $100 starting balance.
 
 | Model | Sizing | Trades | Hit Rate | Mean Edge | ROI / Return | Max Drawdown |
 |-------|--------|--------|----------|-----------|-------------|--------------|
