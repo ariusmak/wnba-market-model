@@ -1,0 +1,7 @@
+model,entry_window,edge_min,norm_min,sizing,n_trades,hit_rate,mean_edge,total_fees,total_pnl,median_lead_h,roi,final_bankroll,total_return,max_drawdown,mean_kelly_f,mean_wager
+elo,half_life,0.15,0.25,fixed,68,0.3971,0.1872,3.6,18.88,13.6,0.2777,,,,,
+elo,half_life,0.05,0.25,half_kelly,155,0.3419,0.1273,366.31,416.97,14.8,,516.97,4.1697,1096.1,0.189,53.08
+elo,half_life,0.05,0.25,full_kelly,155,0.3419,0.1273,339.69,-53.09,14.8,,46.91,-0.5309,1730.96,0.189,48.45
+full_model,half_life,0.15,0.25,fixed,59,0.5254,0.1919,2.82,21.32,13.5,0.3614,,,,,
+full_model,half_life,0.05,0.25,half_kelly,134,0.403,0.1338,566.31,1061.79,13.5,,1161.79,10.6179,2706.17,0.2176,109.56
+full_model,half_life,0.05,0.25,full_kelly,134,0.403,0.1338,1159.91,206.31,13.5,,306.31,2.0631,6591.75,0.2176,228.34
