@@ -326,7 +326,7 @@ Requires a `.env` file with `SPORTRADAR_API_KEY` (see `.env.example`).
 
 2. **Walk-forward CV, not k-fold.** Sports data is temporal. Using future data to predict past games would be leakage.
 
-3. **Separate calibration period.** Platt scaling is fit on OOF predictions from 2020–2024, not on the 2025 holdout.
+3. **Engineered and tuned features.** Features are carefully crafted and feature engineering hyperparameters are tuned where appropriate.
 
 4. **Pre-tipoff only trading.** All entry decisions happen before tipoff. In-game price movements reflect live information, not pregame model edge.
 
