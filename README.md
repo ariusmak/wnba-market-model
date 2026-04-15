@@ -102,15 +102,51 @@ This is further confirmed by feature importance. When XGBoost has no Elo base ma
 
 The most counterintuitive result is the gap between forecasting and trading performance. On the 2025 holdout, the full model's log loss improvement over Elo is modest (0.6121 vs 0.6151 — just 0.003 points), yet it produces **1,062% half-Kelly return** vs Elo's **417%** — a 2.5x difference in terminal wealth from a nearly negligible calibration improvement.
 
-Several mechanisms may explain this:
+**The entire return gap is driven by differential game selection, not by better sizing or higher accuracy on the same games.** A direct head-to-head analysis ([`trading_results2.ipynb`](notebooks/analysis/trading_results2.ipynb) §14) under identical entry rules (edge ≥ 0.05, norm_edge ≥ 0.25, half-life entry) gives:
 
-1. **Tail accuracy matters more than average calibration.** Log loss averages over all games equally. But trading only occurs on games where the model sees sufficient edge — typically 30–40% of the season. If the model is even slightly more accurate in these high-edge games (where predictions diverge most from market prices), the trading returns compound dramatically even though the average log loss barely changes.
+| Trade partition | Games | FM hit rate | FM P&L | Elo hit rate | Elo P&L |
+|----|----|----|----|----|----|
+| Traded by both models (always same side) | 111 | 35.1% | −$1 | 35.1% | +$210 |
+| Only the full model traded | 23 | **65.2%** | **+$1,063** | — | — |
+| Only Elo traded | 44 | 31.8% | — | 31.8% | +$207 |
+| **Total** | — | **40.3%** | **+$1,062** | **34.2%** | **+$417** |
 
-2. **Trade selection is itself a prediction.** The full model doesn't just predict differently — it *selects different games to trade*. With its best entry rule, it takes 134 trades at a 40.3% hit rate, while Elo takes 155 trades at 34.2%. Under its tightest filter (fixed $1), the model achieves a 52.5% hit rate on 59 trades vs Elo's 39.7% on 68. Fewer, higher-conviction bets with a substantially higher win rate is exactly what Kelly sizing rewards exponentially.
+The interpretation is sharp:
 
-3. **The model-vs-market disagreement edge.** When the model and Kalshi disagree on the favored team (59 games), the model is correct 61% of the time. These disagreement games are precisely the games with the largest perceived edge, and the ones that drive the bulk of trading returns. Even a small accuracy advantage in this specific subset can translate to large compounding gains.
+1. **On shared games, the full model is actually slightly worse.** Both models pick the same side on all 111 shared games, with nearly identical Kelly fractions (mean 0.211 vs 0.216) and identical hit rates (35.1%). The full model's mean edge on these games is *lower* in normalized terms (0.494 vs 0.555). Compounding noise leaves it −$1 while Elo books +$210 on the same positions. So the FM does not win by "betting bigger on winners" or "tail accuracy in high-edge games."
 
-4. **Half-Kelly amplifies small edges.** Kelly sizing is exponential in the number of positive-edge bets. A model that identifies even slightly better opportunities — higher mean edge, better side selection, or fewer losing trades — compounds that advantage multiplicatively across 130+ bets, turning a statistically insignificant per-trade improvement into an economically meaningful difference in terminal wealth.
+2. **The full model's edge is knowing which games to skip.** Elo uniquely triggers on 44 games that hit only 31.8% — it overtrades games where its flat team-strength prior sees edge that isn't there. The full model's player-availability, recent-form, and style features *suppress* these false-edge trades while *surfacing* 23 new games that Elo misses. Those 23 games hit **65.2%** and produce +$1,063 — essentially all of the full model's profit.
+
+3. **Compounding amplifies the selection advantage.** Half-Kelly sizes proportionally to current bankroll. Because the 23 FM-exclusive winners come concentrated in mid-to-late season (when the bankroll is already inflated from earlier trades), their dollar contribution is much larger than a fixed-$1 simulation would show. The same 23 games under fixed $1 sizing would produce only +$15 of profit.
+
+**In short:** the full model's feature set does not improve probability accuracy on games both models want to trade. It improves *trade selection* — suppressing overconfident Elo bets on contextually unfavorable matchups and surfacing high-conviction games Elo's team-strength-only view cannot distinguish. The thin 0.003-log-loss gap reflects the fact that this selection advantage is localized to ~20% of the season; average calibration across all 310 games barely moves.
+
+### Realistic execution: liquidity and bankroll sensitivity
+
+The 1,062% figure above assumes infinite liquidity at the best offer. Historical Kalshi trade data tells a different story at realistic capital levels ([`return_investigation.ipynb`](notebooks/analysis/return_investigation.ipynb) §4, §6).
+
+**Sweep-execution simulation** — for each trade, walk actual historical trades in the entry window chronologically, take any contracts at or below our max entry price up to our required size, and leave unfilled quantity unexecuted:
+
+| Starting bankroll | Ideal return | Sweep return | Mean fill rate |
+|---|---|---|---|
+| $100 | 1,062% | 2,547% | 98% |
+| $500 | 1,064% | 1,888% | 95% |
+| $1,000 | 1,065% | 1,439% | 92% |
+| $2,500 | 1,065% | 1,261% | 84% |
+| $5,000 | 1,065% | 806% | 79% |
+| $7,500 | 1,065% | 662% | 76% |
+| $10,000 | 1,065% | 577% | 71% |
+
+Two important caveats on the sweep-return column:
+
+- At **$100–$1,000**, sweep *exceeds* ideal. This is an upward bias: historical trades represent all market activity, and the VWAP below our threshold is sometimes cheaper than the entry snapshot price. A real trader placing limit orders would not systematically get those improved fills. Treat small-bankroll sweep returns as an optimistic envelope.
+- At **$5,000+**, the opposite bias dominates: we are competing with the same historical participants for that liquidity, not observing resting orders. Realistic execution likely lies *below* the sweep return.
+
+The meaningful signal across the table is the trajectory: **Kelly % returns are flat under infinite liquidity but degrade monotonically above $1k** once order size exceeds typical in-window volume. At the $5k bankroll used as a realistic case, the sweep path delivers **+765% ($38,250 P&L)** — a 28% haircut from the ideal path.
+
+**Capacity breakpoint.** Trade-by-trade fill rates drop from 98% (Q1) to 67% (Q4) at $5k because Kelly wagers grow with the bankroll and late-season contract sizes routinely exceed pre-tipoff window liquidity (mean 5,941 contracts needed vs median 8,364 available). Above ~$2.5k, the strategy is liquidity-constrained rather than edge-constrained. Scaling beyond this requires either multi-venue execution, in-game entries (currently disallowed), or deliberate under-sizing below Kelly.
+
+**Recommended live sizing.** A hard **5% per-trade cap** on top of half-Kelly keeps expected wagers inside the liquid region on nearly every trade while limiting drawdown under realistic hit-rate variance. Plain half-Kelly on a $5k bankroll prescribes wagers averaging $5,492 and max $46,741 — well outside what the order book can absorb. See [`return_investigation.ipynb`](notebooks/analysis/return_investigation.ipynb) §4 for the full analysis.
 
 ### The honest uncertainty
 
