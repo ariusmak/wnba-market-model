@@ -34,6 +34,7 @@ def coordinate_cash_for_plan(
     filled_position_dollars: float,
     reserved_position_dollars: float,
     current_position_q: Optional[float],
+    first_qualified_ts_s: Optional[float] = None,
     wait_s: float = 1.0,
     freshness_s: float = 120.0,
 ) -> CashCoordinationResult:
@@ -63,6 +64,7 @@ def coordinate_cash_for_plan(
         filled_position_dollars=filled_position_dollars,
         reserved_position_dollars=reserved_position_dollars,
         current_position_q=current_position_q,
+        first_qualified_ts_s=first_qualified_ts_s,
         now_s=now_s,
     )
     with _CoordinatorLock(lock_dir):
@@ -132,6 +134,7 @@ def _candidate_payload(
     filled_position_dollars: float,
     reserved_position_dollars: float,
     current_position_q: Optional[float],
+    first_qualified_ts_s: Optional[float],
     now_s: float,
 ) -> dict[str, Any]:
     return {
@@ -152,7 +155,7 @@ def _candidate_payload(
         "min_child_order_dollars": cfg.min_child_order_dollars,
         "absolute_edge": best.edge,
         "normalized_edge": best.norm_edge,
-        "first_qualified_ts_s": None,
+        "first_qualified_ts_s": first_qualified_ts_s,
         "executable_liquidity_dollars": plan.route_capacity_sum_dollars,
         "route_slippage": max(0.0, best.all_in_avg_price_cents - best.best_ask_cents),
         "available_cash_after_buffer_seen": available_cash_after_buffer,

@@ -1,12 +1,31 @@
 import argparse
 import json
 from pathlib import Path
+from datetime import datetime
 
 import pandas as pd
 
 
+def latest_daily_injury_files(year: int) -> list[Path]:
+    latest: dict[str, tuple[str, Path]] = {}
+    for path in Path("data/bronze").glob(f"daily_injuries__{year}-*__*.json"):
+        parts = path.name.split("__")
+        if len(parts) < 3:
+            continue
+        injury_date = parts[1]
+        pulled = parts[2].removesuffix(".json")
+        try:
+            datetime.strptime(injury_date, "%Y-%m-%d")
+            datetime.strptime(pulled, "%Y%m%dT%H%M%SZ")
+        except ValueError:
+            continue
+        if injury_date not in latest or pulled > latest[injury_date][0]:
+            latest[injury_date] = (pulled, path)
+    return [item[1] for item in sorted(latest.values(), key=lambda item: item[1].name)]
+
+
 def main(year: int):
-    files = sorted(Path("data/bronze").glob(f"daily_injuries__{year}-*.json"))
+    files = latest_daily_injury_files(year)
     if not files:
         raise FileNotFoundError(f"No daily_injuries__{year}-*.json files found in data/bronze")
 
@@ -15,7 +34,7 @@ def main(year: int):
 
     for path in files:
         data = json.loads(path.read_text(encoding="utf-8"))
-        date = data.get("date")
+        date = data.get("date") or path.name.split("__")[1]
         teams = data.get("teams") or []
         if teams:
             nonempty_days += 1
@@ -45,6 +64,19 @@ def main(year: int):
                     })
 
     df = pd.DataFrame(rows)
+    if len(df):
+        df = df.drop_duplicates(
+            subset=[
+                "asof_date",
+                "team_id",
+                "player_id",
+                "injury_id",
+                "status",
+                "start_date",
+                "update_date",
+            ],
+            keep="last",
+        )
     Path("data/silver").mkdir(parents=True, exist_ok=True)
     out_path = Path(f"data/silver/injury_events_{year}.csv")
     df.to_csv(out_path, index=False)

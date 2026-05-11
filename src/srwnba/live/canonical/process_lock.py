@@ -29,12 +29,6 @@ class GameProcessLock:
 
     def acquire(self) -> None:
         self.lock_dir.mkdir(parents=True, exist_ok=True)
-        status = read_game_lock_status(self.path)
-        if status.locked and status.running and status.pid != os.getpid():
-            raise RuntimeError(
-                f"route loop already running for game_id={self.game_id} "
-                f"pid={status.pid} lock={self.path}"
-            )
         payload = {
             "game_id": self.game_id,
             "pid": os.getpid(),
@@ -42,10 +36,29 @@ class GameProcessLock:
             "created_ts_s": time.time(),
             "metadata": self.metadata,
         }
-        tmp = self.path.with_name(self.path.name + f".{os.getpid()}.tmp")
-        tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        tmp.replace(self.path)
-        self.acquired = True
+        body = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+
+        while True:
+            try:
+                with self.path.open("x", encoding="utf-8") as f:
+                    f.write(body)
+                self.acquired = True
+                return
+            except FileExistsError:
+                status = read_game_lock_status(self.path)
+                if status.locked and status.running:
+                    raise RuntimeError(
+                        f"route loop already running for game_id={self.game_id} "
+                        f"pid={status.pid} lock={self.path}"
+                    )
+                try:
+                    self.path.unlink()
+                except FileNotFoundError:
+                    continue
+                except OSError as exc:
+                    raise RuntimeError(
+                        f"stale route lock exists and could not be removed: {self.path}"
+                    ) from exc
 
     def release(self) -> None:
         if not self.acquired:

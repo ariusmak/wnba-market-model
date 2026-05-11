@@ -1,6 +1,5 @@
 import argparse
 import os
-from datetime import datetime, timezone
 from pathlib import Path
 
 from srwnba.config import load_config
@@ -15,28 +14,24 @@ def main(year: int, season_type: str, access_level: str = "trial"):
     print("cwd:", os.getcwd())
     print("args:", year, season_type, access_level)
 
-    # write a marker immediately so we know the script actually executed
     Path("data/bronze").mkdir(parents=True, exist_ok=True)
-    marker = Path("data/bronze") / "SCHEDULE_SCRIPT_RAN.marker.txt"
-    marker.write_text(f"ran at {datetime.now(timezone.utc).isoformat()}Z\n", encoding="utf-8")
-    print("STEP 1: wrote marker:", marker.resolve())
 
     if season_type not in {"REG", "PST", "PRE"}:
         raise ValueError("season_type must be one of: REG, PST, PRE")
 
-    print("STEP 2: loading config")
+    print("STEP 1: loading config")
     cfg = load_config()
 
-    print("STEP 3: creating client")
+    print("STEP 2: creating client")
     client = SportradarClient(cfg)
     ep = EndpointConfig(access_level=access_level)
 
     url = season_schedule(ep, year, season_type)
-    print("STEP 4: url:", url)
+    print("STEP 3: url:", url)
 
-    print("STEP 5: fetching")
+    print("STEP 4: fetching")
     data = client.get_json(url)
-    print("STEP 6: fetched keys:", list(data.keys())[:20])
+    print("STEP 5: fetched keys:", list(data.keys())[:20])
 
     out_path = save_bronze(
         data,
@@ -52,7 +47,7 @@ def main(year: int, season_type: str, access_level: str = "trial"):
         },
     )
 
-    print("STEP 7: saved:", Path(out_path).resolve())
+    print("STEP 6: saved:", Path(out_path).resolve())
     print("games:", len(data.get("games", [])))
 
 

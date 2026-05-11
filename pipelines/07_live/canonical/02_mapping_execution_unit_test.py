@@ -13,6 +13,7 @@ import csv
 import json
 import math
 import sys
+from tempfile import TemporaryDirectory
 from datetime import datetime, timezone
 from pathlib import Path
 from collections import Counter
@@ -37,6 +38,7 @@ from srwnba.live.canonical.cash_priority import (  # noqa: E402
     marginal_expected_log_growth_per_dollar,
     rank_cash_limited_tickets,
 )
+from srwnba.live.canonical.cash_coordinator import coordinate_cash_for_plan  # noqa: E402
 from srwnba.live.canonical.expansion_gate import (  # noqa: E402
     TRUE_EXPANSION_TEAMS_2026,
     evaluate_expansion_team_gate,
@@ -55,6 +57,7 @@ from srwnba.live.canonical.kalshi_mapping import (  # noqa: E402
 )
 from srwnba.live.canonical.route_entry_loop import RouteEntryContext, RouteEntryLoop  # noqa: E402
 from srwnba.live.canonical.portfolio import resolve_portfolio_sizing  # noqa: E402
+from srwnba.live.canonical.process_lock import GameProcessLock, read_game_lock_status  # noqa: E402
 from srwnba.live.canonical.v1_2 import (  # noqa: E402
     BrakeState,
     PlannerRuntimeState,
@@ -160,6 +163,23 @@ def test_portfolio_sizing_resolution() -> None:
     assert override.available_cash_dollars == 1000.0
     assert override.available_cash_source == "override"
     print("  portfolio sizing resolution OK")
+
+
+def test_game_process_lock_blocks_duplicate_acquire() -> None:
+    with TemporaryDirectory() as tmp:
+        first = GameProcessLock(game_id="unit/game", lock_dir=Path(tmp))
+        first.acquire()
+        status = read_game_lock_status(first.path)
+        assert status.locked and status.running and status.pid is not None
+        duplicate_blocked = False
+        try:
+            GameProcessLock(game_id="unit/game", lock_dir=Path(tmp)).acquire()
+        except RuntimeError:
+            duplicate_blocked = True
+        assert duplicate_blocked
+        first.release()
+        assert not read_game_lock_status(first.path).locked
+    print("  game process lock duplicate guard OK")
 
 
 def test_expansion_team_name_map_aliases() -> None:
@@ -408,6 +428,52 @@ def test_cash_priority_math_and_allocator() -> None:
     assert allocated[0].allocated_child_size_dollars == 100.0
     assert allocated[1].skipped_due_to_cash
     print("  cash priority math/allocator OK")
+
+
+def test_cash_coordinator_preserves_first_qualification_ts() -> None:
+    routes = test_historical_mapping_and_routes()
+    cfg = ExecutionConfig(bankroll=5000.0)
+    quotes = [
+        evaluate_route_quote(
+            routes[0],
+            {"orderbook": {"yes": [[41, 1000]], "no": [[45, 1000]]}},
+            p_selected=0.72,
+            cfg=cfg,
+            ts_ms=1,
+        )
+    ]
+    signal = update_signal_memory(SignalMemory(), quotes, now_s=123.0, tipoff_ts_s=13 * 3600)
+    plan = plan_v1_2_orders(
+        selected_team_id=routes[0].selected_team_id,
+        p_selected=0.72,
+        route_quotes=quotes,
+        cfg=cfg,
+        runtime=PlannerRuntimeState(
+            now_s=123.0,
+            tipoff_ts_s=13 * 3600,
+            signal=signal,
+            available_cash_dollars=5000.0,
+        ),
+    )
+    assert plan.orders
+    with TemporaryDirectory() as tmp:
+        result = coordinate_cash_for_plan(
+            game_id="cash-tie-break-game",
+            plan=plan,
+            cfg=cfg,
+            coordinator_dir=Path(tmp),
+            available_cash_after_buffer=1000.0,
+            filled_position_dollars=0.0,
+            reserved_position_dollars=0.0,
+            current_position_q=None,
+            first_qualified_ts_s=signal.first_qualified_ts_s,
+            wait_s=0.0,
+        )
+        assert result.plan.orders
+        candidate_path = Path(tmp) / "candidates" / "cash-tie-break-game.json"
+        candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+        assert candidate["first_qualified_ts_s"] == 123.0
+    print("  cash coordinator first-qualified tie-break field OK")
 
 
 def test_v1_2_timing_and_signal_memory() -> None:
@@ -719,6 +785,7 @@ def main() -> None:
     test_event_date_parser()
     test_moneyline_market_filter()
     test_portfolio_sizing_resolution()
+    test_game_process_lock_blocks_duplicate_acquire()
     test_expansion_team_name_map_aliases()
     test_expansion_gate()
     test_historical_mapping_and_routes()
@@ -727,6 +794,7 @@ def main() -> None:
     test_high_price_rejection()
     test_order_kwargs_and_submit_bridge()
     test_cash_priority_math_and_allocator()
+    test_cash_coordinator_preserves_first_qualification_ts()
     test_v1_2_timing_and_signal_memory()
     test_v1_2_late_only_rejection()
     test_v1_2_burst_and_brake_controls()

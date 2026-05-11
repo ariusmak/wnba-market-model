@@ -44,6 +44,15 @@ def main() -> None:
     legacy_player_path = REPO_ROOT / "data" / "silver" / f"game_team_player_{args.year}_REGPST.csv"
     legacy_state_paths = list((REPO_ROOT / "data" / "silver_plus").glob("player_state_history_*.csv"))
     bronze_dir = REPO_ROOT / "data" / "bronze"
+    injury_events_path = REPO_ROOT / "data" / "silver" / f"injury_events_{args.year}.csv"
+
+    marker_files = []
+    for layer in ("bronze", "silver", "silver_plus", "gold"):
+        layer_dir = REPO_ROOT / "data" / layer
+        if layer_dir.exists():
+            marker_files.extend(p.relative_to(REPO_ROOT).as_posix() for p in layer_dir.rglob("*.marker.txt"))
+    if marker_files:
+        errors.append(f"debug marker files found in canonical data layers: {marker_files[:10]}")
 
     if len(FEAT_COLS) != 160:
         errors.append(f"FEAT_COLS expected 160, got {len(FEAT_COLS)}")
@@ -111,6 +120,16 @@ def main() -> None:
         missing_state = sorted(needed_state - set(state.columns))
         if missing_state:
             errors.append(f"{state_path.name} missing columns: {missing_state}")
+
+    if injury_events_path.exists():
+        injuries = pd.read_csv(injury_events_path)
+        if len(injuries):
+            injury_key = ["asof_date", "team_id", "player_id", "injury_id", "status", "start_date", "update_date"]
+            missing_key = [col for col in injury_key if col not in injuries.columns]
+            if missing_key:
+                errors.append(f"{injury_events_path.name} missing injury event key columns: {missing_key}")
+            elif injuries.duplicated(subset=injury_key).any():
+                errors.append(f"{injury_events_path.name} has duplicate injury event keys")
 
     if not player_path.exists():
         errors.append(f"missing full player store: {player_path}")

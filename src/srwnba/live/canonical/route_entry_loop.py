@@ -367,6 +367,7 @@ class RouteEntryLoop:
                 filled_position_dollars=self.state.filled_cost_dollars,
                 reserved_position_dollars=self.state.reserved_cost_dollars,
                 current_position_q=self._current_position_q_all_in(),
+                first_qualified_ts_s=self.signal.first_qualified_ts_s,
             )
             plan = coordination.plan
             self._write_event({"evt": "cash_coordination", **dict(coordination.payload)})
