@@ -36,6 +36,7 @@ def main() -> None:
 
     today = date.fromisoformat(args.today)
     errors: list[str] = []
+    gold: pd.DataFrame | None = None
 
     gold_path = REPO_ROOT / "data" / "gold" / f"game_xgboost_input_{args.year}_REGPST.csv"
     combined_path = REPO_ROOT / "data" / "gold" / f"game_xgboost_input_{args.start_year}_{args.year}_REGPST.csv"
@@ -157,6 +158,8 @@ def main() -> None:
     if future_files:
         errors.append(f"future daily-injury files in canonical bronze: {future_files[:10]}")
 
+    errors.extend(validate_franchise_continuity(args.year, gold))
+
     if args.year >= 2026:
         if not combined_path.exists():
             errors.append(f"missing production combined training file: {combined_path}")
@@ -226,6 +229,62 @@ def validate_binary_label(df: pd.DataFrame, name: str) -> list[str]:
     if bad:
         return [f"{name} home_win labels must be binary 0/1; saw {bad[:10]}"]
     return []
+
+
+def validate_franchise_continuity(year: int, gold: pd.DataFrame | None) -> list[str]:
+    if gold is None or gold.empty:
+        return []
+
+    errors: list[str] = []
+    map_path = REPO_ROOT / "data" / "config" / "franchise_map.csv"
+    if not map_path.exists():
+        return [f"missing franchise map: {map_path}"]
+
+    fmap = pd.read_csv(map_path, dtype={"team_id": str, "franchise_id": str})
+    fmap["start_year"] = pd.to_numeric(fmap["start_year"], errors="coerce").astype("Int64")
+    fmap["end_year"] = pd.to_numeric(fmap["end_year"], errors="coerce").astype("Int64")
+
+    current_team_ids = _team_ids_from_gold(gold)
+    for team_id in sorted(current_team_ids):
+        rows = fmap[fmap["team_id"].astype(str) == team_id]
+        if rows.empty:
+            continue
+        active = rows[(rows["start_year"] <= year) & (rows["end_year"] >= year)]
+        if active.empty:
+            errors.append(
+                f"franchise_map has current team_id={team_id} but no row covers year={year}; "
+                "this would fall back to raw team_id and lose franchise priors"
+            )
+
+    prev_gold_path = REPO_ROOT / "data" / "gold" / f"game_xgboost_input_{year-1}_REGPST.csv"
+    style_path = REPO_ROOT / "data" / "silver_plus" / f"game_franchise_style_profile_{year}_REGPST.csv"
+    if prev_gold_path.exists() and style_path.exists():
+        prev_gold = pd.read_csv(prev_gold_path, usecols=["home_team_id", "away_team_id"])
+        prior_team_ids = _team_ids_from_gold(prev_gold)
+        style = pd.read_csv(style_path)
+        needed = {"team_id", "franchise_id", "games_played_before_game", "prior_source"}
+        if needed.issubset(style.columns):
+            games_before = pd.to_numeric(style["games_played_before_game"], errors="coerce").fillna(-1)
+            bad = style[
+                style["team_id"].astype(str).isin(prior_team_ids)
+                & (games_before == 0)
+                & (style["prior_source"].astype(str) == "league_init")
+            ]
+            if len(bad):
+                sample = bad[["team_id", "franchise_id", "game_id", "prior_source"]].head(5).to_dict("records")
+                errors.append(
+                    f"{style_path.name} has existing prior-season teams initialized from league_init: {sample}"
+                )
+
+    return errors
+
+
+def _team_ids_from_gold(df: pd.DataFrame) -> set[str]:
+    team_ids: set[str] = set()
+    for col in ("home_team_id", "away_team_id"):
+        if col in df.columns:
+            team_ids.update(str(v) for v in df[col].dropna().astype(str))
+    return team_ids
 
 
 if __name__ == "__main__":
