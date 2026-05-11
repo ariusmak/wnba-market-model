@@ -435,7 +435,7 @@ def check_daemon_heartbeat(
     age_s = (now - last_seen).total_seconds() if last_seen else None
     details = {
         "bot_id": bot_id,
-        "status": heartbeat.get("status"),
+        "heartbeat_status": heartbeat.get("status"),
         "current_mode": heartbeat.get("current_mode"),
         "last_seen_at": heartbeat.get("last_seen_at"),
         "last_control_seen_at": heartbeat.get("last_control_seen_at"),
