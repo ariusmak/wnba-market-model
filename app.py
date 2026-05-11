@@ -935,7 +935,7 @@ def market_action_buttons(row: dict[str, Any], connected: bool, controls: list[d
     local_label = "Clear Abort" if local_aborted else "Abort Game"
 
     action_cols = st.columns(3)
-    if action_cols[0].button("Open Detail", key=f"detail_{game_id}", use_container_width=True):
+    if action_cols[0].button("Open Detail", key=f"detail_{game_id}", use_container_width=True, type="secondary"):
         st.session_state["selected_game_id"] = game_id
         st.session_state["page"] = "Live Market Detail"
         st.rerun()
@@ -943,6 +943,7 @@ def market_action_buttons(row: dict[str, Any], connected: bool, controls: list[d
         remote_label,
         key=f"remote_toggle_{game_id}",
         use_container_width=True,
+        type="primary",
         disabled=not overrides_unlocked,
     ):
         run_command(
@@ -954,6 +955,7 @@ def market_action_buttons(row: dict[str, Any], connected: bool, controls: list[d
         local_label,
         key=f"local_abort_toggle_{game_id}",
         use_container_width=True,
+        type="secondary",
         disabled=not overrides_unlocked,
     ):
         run_local_command(
@@ -1201,13 +1203,13 @@ def live_market_detail(state: dict[str, Any], connected: bool) -> None:
         f"allowed={decision.trade_allowed} | reason={decision.reason} | risk={decision.risk_mode.upper()}"
     )
     control_cols = st.columns(2)
-    if control_cols[0].button(remote_label, use_container_width=True, disabled=not unlock_detail):
+    if control_cols[0].button(remote_label, use_container_width=True, type="primary", disabled=not unlock_detail):
         run_command(
             remote_label,
             lambda gid=game_id, command=remote_command: db.apply_market_command(gid, command, reason),
             connected,
         )
-    if control_cols[1].button(local_label, use_container_width=True, disabled=not unlock_detail):
+    if control_cols[1].button(local_label, use_container_width=True, type="secondary", disabled=not unlock_detail):
         run_local_command(
             local_label,
             lambda gid=game_id, r=reason, decision_value="default" if local_aborted else "abort": save_game_override(
