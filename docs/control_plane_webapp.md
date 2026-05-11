@@ -20,6 +20,7 @@ The dashboard is deployed from the private GitHub repo `ariusmak/wnba_kalshi_pro
 - `app.py` - Streamlit dashboard UI.
 - `supabase_io.py` - all Supabase reads/writes used by the dashboard and seed script.
 - `sql/schema.sql` - canonical full schema for a fresh Supabase project.
+- `sql/patch_control_plane_pre_shadow.sql` - consolidated idempotent patch to run before the shadow rehearsal.
 - `sql/patch_worker_ack_status.sql` - adds `bot_heartbeat.last_control_seen_at` for worker command acknowledgment.
 - `pipelines/07_live/18_control_plane_smoke.py` - command-line Supabase schema/acknowledgment smoke test.
 - `scripts/seed_fake_data.py` - fake data seeder for UI QA only.
@@ -212,8 +213,7 @@ Fresh Supabase:
 
 Existing Supabase used in this project:
 
-1. run `sql/patch_worker_ack_status.sql` if `bot_heartbeat.last_control_seen_at` is missing,
-2. run `sql/patch_market_controls_cancel_passives.sql` if `market_controls.cancel_passive_orders` is missing,
+1. run `sql/patch_control_plane_pre_shadow.sql` in the Supabase SQL editor,
 3. set Streamlit secrets in Streamlit Cloud,
 4. run the control-plane smoke in read-only mode,
 5. deploy from private GitHub repo with entrypoint `app.py`.

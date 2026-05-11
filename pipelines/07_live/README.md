@@ -38,6 +38,7 @@ per-game route loop is running.
 Use `18_control_plane_smoke.py` as the pre-live remote-control rehearsal:
 
 ```powershell
+# First run sql\patch_control_plane_pre_shadow.sql in Supabase SQL editor.
 python pipelines\07_live\18_control_plane_smoke.py --write-noop-command --require-daemon-ack --ack-timeout-s 180
 ```
 
