@@ -99,6 +99,7 @@ class EffectiveControlDecision:
             "control_plane_market_pause_active": market.get("pause_active"),
             "control_plane_market_block_new_entries": market.get("block_new_entries"),
             "control_plane_market_cancel_entry": market.get("cancel_entry"),
+            "control_plane_market_cancel_passive_orders": market.get("cancel_passive_orders"),
             "control_plane_market_force_conservative": market.get("force_conservative"),
             "local_operator_trade_allowed": self.local_decision.trade_allowed,
             "local_operator_reason": self.local_decision.reason,
@@ -282,12 +283,23 @@ class ControlPlaneBridge:
             "model_prob_changed_t20_to_t8": bool(event.get("model_prob_changed_t20_to_t8") or False),
             "model_prob_last_refresh_at": event.get("model_prob_last_refresh_at_utc"),
             "model_probability_update_count": _int(event.get("model_probability_update_count")),
+            "market_prob": _prob(event.get("market_prob")),
+            "abs_edge": _num(event.get("abs_edge")),
+            "norm_edge": _num(event.get("norm_edge")),
+            "q_max_price": _prob(event.get("q_max_price")),
+            "q_exec_all_in_price": _prob(event.get("q_exec_all_in_price")),
             "bankroll_for_sizing_dollars": _num(context.get("bankroll")),
             "available_cash_after_buffer_dollars": _num(context.get("available_cash_after_buffer_dollars")),
             "target_position_now_dollars": _num(event.get("target_position_dollars")),
             "filled_position_dollars": _num(event.get("filled_position_dollars")),
+            "filled_contracts": _int(event.get("filled_contracts")),
             "reserved_open_order_dollars": _num(event.get("reserved_position_dollars")),
             "remaining_position_dollars": _num(event.get("remaining_position_dollars")),
+            "visible_depth_cap_dollars": _num(event.get("visible_depth_cap_dollars")),
+            "recent_volume_cap_dollars": _num(event.get("recent_volume_cap_dollars")),
+            "cold_start_cap_dollars": _num(event.get("cold_start_cap_dollars")),
+            "rolling_liquidity_cap_dollars": _num(event.get("rolling_liquidity_cap_dollars")),
+            "cumulative_cap_remaining_dollars": _num(event.get("cumulative_cap_remaining_dollars")),
             "allowed_to_try_now_dollars": _num(event.get("allowed_child_dollars")),
             "next_child_order_dollars": _num(event.get("allowed_child_dollars")),
             "cash_limited_mode": bool(event.get("cash_limited_mode") or False),
@@ -300,6 +312,7 @@ class ControlPlaneBridge:
             "q_avg_after_child": _prob(event.get("q_avg_after_child")),
             "skipped_due_to_cash": bool(event.get("skipped_due_to_cash") or False),
             "target_position_binder": event.get("binding_cap"),
+            "execution_binder": event.get("execution_binder"),
             "last_action": decision,
             "last_reject_reason": reject_reason or None,
             "number_of_order_attempts": len(event.get("orders") or []),
@@ -476,6 +489,8 @@ def merge_control_decision(
                 market_status = str(market.get("market_status") or "normal").lower()
                 if _bool(market.get("force_conservative"), default=False) or market_status == "force_conservative":
                     risk_mode = "conservative"
+                if _bool(market.get("cancel_passive_orders"), default=False):
+                    allow_passive = False
                 if (
                     _bool(market.get("pause_active"), default=False)
                     or _bool(market.get("block_new_entries"), default=False)
@@ -483,7 +498,15 @@ def merge_control_decision(
                     or market_status in {"paused", "cancelled", "blocked"}
                 ):
                     trade_allowed = False
-                    reason = f"control_plane_market_{market_status or 'blocked'}"
+                    if _bool(market.get("cancel_entry"), default=False) or market_status == "cancelled":
+                        market_reason = "cancelled"
+                    elif _bool(market.get("block_new_entries"), default=False) or market_status == "blocked":
+                        market_reason = "blocked"
+                    elif _bool(market.get("pause_active"), default=False) or market_status == "paused":
+                        market_reason = "paused"
+                    else:
+                        market_reason = market_status or "blocked"
+                    reason = f"control_plane_market_{market_reason}"
 
     publish_healthy = publish_failure_count < 3
     if mode == "supabase-live" and not publish_healthy:

@@ -108,8 +108,16 @@ Market commands:
 - `PAUSE_MARKET`
 - `UNPAUSE_MARKET`
 - `CANCEL_ENTRY`
+- `CANCEL_MARKET_PASSIVES`
 - `BLOCK_GAME`
 - `FORCE_CONSERVATIVE_MARKET`
+- `CLEAR_MARKET_CONTROLS`
+
+`CANCEL_MARKET_PASSIVES` only disables/cancels passive resting orders for that
+game. It does not block IOC sweeps if all other gates still pass.
+`CLEAR_MARKET_CONTROLS` resets the remote per-game pause/cancel/block/passive
+cancel/conservative fields back to normal. Local JSON abort files remain a
+separate emergency brake and are not cleared by remote commands.
 
 Every command should insert into `control_commands` and then update the target control table. If the target update fails, mark the command failed.
 
@@ -199,8 +207,9 @@ Fresh Supabase:
 Existing Supabase used in this project:
 
 1. run `sql/patch_worker_ack_status.sql` if `bot_heartbeat.last_control_seen_at` is missing,
-2. set Streamlit secrets in Streamlit Cloud,
-3. deploy from private GitHub repo with entrypoint `app.py`.
+2. run `sql/patch_market_controls_cancel_passives.sql` if `market_controls.cancel_passive_orders` is missing,
+3. set Streamlit secrets in Streamlit Cloud,
+4. deploy from private GitHub repo with entrypoint `app.py`.
 
 ## QA Checklist
 

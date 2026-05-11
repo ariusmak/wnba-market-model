@@ -62,7 +62,7 @@ from srwnba.live.canonical.operator_control import OperatorDecision  # noqa: E40
 from srwnba.live.canonical.route_entry_loop import RouteEntryContext, RouteEntryLoop  # noqa: E402
 from srwnba.live.canonical.portfolio import resolve_portfolio_sizing  # noqa: E402
 from srwnba.live.canonical.process_lock import GameProcessLock, read_game_lock_status  # noqa: E402
-from srwnba.live.control_plane import RemoteControlSnapshot, merge_control_decision  # noqa: E402
+from srwnba.live.control_plane import apply_effective_config, RemoteControlSnapshot, merge_control_decision  # noqa: E402
 from srwnba.live.canonical.v1_2 import (  # noqa: E402
     BrakeState,
     PlannerRuntimeState,
@@ -995,6 +995,79 @@ def test_control_plane_merge_blocks_and_shadows() -> None:
         q_max_cents=40,
     )
     assert shadow.block_reason_for_order(order) == "control_plane_shadow_mode"
+
+    passive_cancel_remote = RemoteControlSnapshot(
+        mode="supabase-live",
+        read_ok=True,
+        configured=True,
+        database_connected=True,
+        read_at_utc="2026-05-11T00:00:00+00:00",
+        control_state={
+            "trading_enabled": True,
+            "kill_switch_active": False,
+            "allow_new_entries": True,
+            "allow_ioc_orders": True,
+            "allow_passive_orders": True,
+            "allow_burst_mode": True,
+            "mode": "normal",
+        },
+        market_control={
+            "market_status": "normal",
+            "cancel_passive_orders": True,
+        },
+    )
+    passive_cancel = merge_control_decision(
+        game_id="control-plane-unit",
+        mode="supabase-live",
+        local_decision=local,
+        remote_snapshot=passive_cancel_remote,
+    )
+    assert passive_cancel.trade_allowed is True
+    assert passive_cancel.allow_ioc_orders is True
+    assert passive_cancel.allow_passive_orders is False
+    passive_order = PlannedChildOrder(
+        route_id="r1",
+        market_ticker="KXUNIT",
+        route_type="BUY_YES_SELECTED",
+        action="buy",
+        side="yes",
+        count=1,
+        limit_price_cents=39,
+        max_cost_dollars=0.39,
+        expected_all_in_avg_price_cents=39.0,
+        q_max_cents=39,
+        order_mode="passive_probe",
+        post_only=True,
+    )
+    assert passive_cancel.block_reason_for_order(order) == ""
+    assert passive_cancel.block_reason_for_order(passive_order) == "control_plane_passive_orders_disabled"
+    assert apply_effective_config(ExecutionConfig(passive_enabled=True), passive_cancel).passive_enabled is False
+
+    boolean_block_remote = RemoteControlSnapshot(
+        mode="supabase-live",
+        read_ok=True,
+        configured=True,
+        database_connected=True,
+        read_at_utc="2026-05-11T00:00:00+00:00",
+        control_state={
+            "trading_enabled": True,
+            "kill_switch_active": False,
+            "allow_new_entries": True,
+            "mode": "normal",
+        },
+        market_control={
+            "market_status": "normal",
+            "block_new_entries": True,
+        },
+    )
+    boolean_block = merge_control_decision(
+        game_id="control-plane-unit",
+        mode="supabase-live",
+        local_decision=local,
+        remote_snapshot=boolean_block_remote,
+    )
+    assert boolean_block.trade_allowed is False
+    assert boolean_block.reason == "control_plane_market_blocked"
     print("  control-plane merge/shadow gates OK")
 
 

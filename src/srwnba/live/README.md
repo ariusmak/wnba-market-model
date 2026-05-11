@@ -22,6 +22,9 @@ to `local-only`, can be rehearsed with `supabase-shadow`, and should only use
 `supabase-live` once Supabase secrets, dashboard controls, and worker
 acknowledgment are verified. Local JSON controls remain the emergency brake in
 all modes.
+Remote per-game passive cancellation is represented by
+`market_controls.cancel_passive_orders`; it disables/cancels passive resting
+orders for that game while leaving IOC eligibility to the other locked gates.
 
 Live feature rows are mutable until the T-8 no-new-entry boundary. The daemon's
 hourly injury refresh rewrites `data/live_features/<game_id>.csv` for mapped

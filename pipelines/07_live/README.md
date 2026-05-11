@@ -29,6 +29,7 @@ Remote dashboard wiring is controlled explicitly with `--control-plane-mode`:
 - `local-only` keeps execution on local JSON controls only.
 - `supabase-shadow` reads Supabase controls and publishes heartbeat/route/order/equity tables, but intended orders are logged as skipped shadow events.
 - `supabase-live` fails closed if Supabase controls cannot be read and rechecks the merged local+Supabase decision before every Kalshi order attempt.
+- Remote per-game controls can cancel passive resting orders without blocking IOC sweeps; clearing remote controls does not clear local JSON abort files.
 
 Local JSON controls remain the final emergency brake in every mode; Supabase can only add restrictions or lower caps.
 

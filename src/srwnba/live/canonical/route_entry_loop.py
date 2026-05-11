@@ -964,6 +964,9 @@ class RouteEntryLoop:
             "skipped_due_to_cash": plan.skipped_due_to_cash,
             "route_capacity_sum_dollars": plan.route_capacity_sum_dollars,
             "global_cumulative_remaining_dollars": plan.global_cumulative_remaining_dollars,
+            "execution_binder": plan.binding_cap,
+            "filled_contracts": sum(int(v) for v in self.state.filled_contracts_by_route.values()),
+            **_dashboard_quote_payload(plan.route_quotes),
             "decision": plan.decision,
             "reject_reason": plan.reject_reason,
             "orders": [
@@ -1012,6 +1015,9 @@ class RouteEntryLoop:
             "q_current_position": self._current_position_q_all_in(),
             "q_avg_after_child": None,
             "skipped_due_to_cash": False,
+            "execution_binder": reason,
+            "filled_contracts": sum(int(v) for v in self.state.filled_contracts_by_route.values()),
+            **_dashboard_quote_payload(quotes),
             "decision": "blocked_operator" if reason.startswith("operator_") else "blocked_brake",
             "reject_reason": reason,
             "orders": [],
@@ -1312,6 +1318,9 @@ class RouteEntryLoop:
             "q_current_position": self._current_position_q_all_in(),
             "q_avg_after_child": None,
             "skipped_due_to_cash": False,
+            "execution_binder": self.expansion_gate.reason,
+            "filled_contracts": sum(int(v) for v in self.state.filled_contracts_by_route.values()),
+            **_dashboard_quote_payload(quotes),
             "decision": "no_trade",
             "reject_reason": self.expansion_gate.reason,
             **self.expansion_gate.to_log_payload(),
@@ -1599,6 +1608,36 @@ def _prediction_value(result: Mapping[str, Any], key: str) -> Optional[float]:
     except Exception:
         return None
     return out if math.isfinite(out) else None
+
+
+def _dashboard_quote_payload(quotes: Sequence[RouteQuote]) -> Dict[str, Any]:
+    if not quotes:
+        return {}
+    ranked = sorted(
+        quotes,
+        key=lambda quote: (
+            0 if quote.eligible else 1,
+            float(quote.all_in_avg_price_cents or 10_000),
+            float(quote.q_max_cents or 10_000),
+            quote.route.route_id,
+        ),
+    )
+    quote = ranked[0]
+    return {
+        "best_route_id": quote.route.route_id,
+        "best_route_type": quote.route.route_type,
+        "best_market_ticker": quote.route.market_ticker,
+        "market_prob": quote.all_in_avg_price_cents / 100.0,
+        "abs_edge": quote.edge,
+        "norm_edge": quote.norm_edge,
+        "q_max_price": quote.q_max_cents / 100.0,
+        "q_exec_all_in_price": quote.all_in_avg_price_cents / 100.0,
+        "visible_depth_cap_dollars": quote.visible_depth_cap_dollars,
+        "recent_volume_cap_dollars": quote.recent_qualifying_volume_cap_dollars,
+        "cold_start_cap_dollars": quote.cold_start_cap_dollars,
+        "rolling_liquidity_cap_dollars": quote.route_capacity_dollars,
+        "cumulative_cap_remaining_dollars": quote.cumulative_cap_remaining_dollars,
+    }
 
 
 def _path_mtime_ns(path: Optional[Path]) -> Optional[int]:

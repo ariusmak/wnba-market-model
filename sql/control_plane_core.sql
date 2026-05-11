@@ -29,6 +29,7 @@ create table if not exists market_controls (
     pause_active boolean not null default false,
     cancel_entry boolean not null default false,
     block_new_entries boolean not null default false,
+    cancel_passive_orders boolean not null default false,
     force_conservative boolean not null default false,
     updated_at timestamptz not null default now(),
     updated_by text,

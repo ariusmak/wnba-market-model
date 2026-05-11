@@ -328,6 +328,9 @@ MARKET_COMMAND_UPDATES: dict[str, dict[str, Any]] = {
         "block_new_entries": True,
         "market_status": "cancelled",
     },
+    "CANCEL_MARKET_PASSIVES": {
+        "cancel_passive_orders": True,
+    },
     "BLOCK_GAME": {
         "block_new_entries": True,
         "market_status": "blocked",
@@ -335,6 +338,14 @@ MARKET_COMMAND_UPDATES: dict[str, dict[str, Any]] = {
     "FORCE_CONSERVATIVE_MARKET": {
         "force_conservative": True,
         "market_status": "force_conservative",
+    },
+    "CLEAR_MARKET_CONTROLS": {
+        "pause_active": False,
+        "cancel_entry": False,
+        "block_new_entries": False,
+        "cancel_passive_orders": False,
+        "force_conservative": False,
+        "market_status": "normal",
     },
 }
 

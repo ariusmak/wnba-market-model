@@ -922,13 +922,29 @@ def market_action_buttons(row: dict[str, Any], connected: bool) -> None:
             lambda gid=game_id: db.apply_market_command(gid, "BLOCK_GAME", reason),
             connected,
         )
-    st.button(
+    row_remote = st.columns(2)
+    if row_remote[0].button(
         "Cancel Passives",
         key=f"cancel_passives_{game_id}",
         use_container_width=True,
-        disabled=True,
-        help="Per-market passive cancellation needs the worker command contract before this button is enabled.",
-    )
+        disabled=not overrides_unlocked,
+    ):
+        run_command(
+            "Cancel Passives",
+            lambda gid=game_id: db.apply_market_command(gid, "CANCEL_MARKET_PASSIVES", reason),
+            connected,
+        )
+    if row_remote[1].button(
+        "Clear Remote",
+        key=f"clear_remote_{game_id}",
+        use_container_width=True,
+        disabled=not overrides_unlocked,
+    ):
+        run_command(
+            "Clear Remote",
+            lambda gid=game_id: db.apply_market_command(gid, "CLEAR_MARKET_CONTROLS", reason),
+            connected,
+        )
     decision = resolve_operator_decision(game_id)
     override = load_game_override(game_id)
     st.caption(
@@ -1191,6 +1207,11 @@ def live_market_detail(state: dict[str, Any], connected: bool) -> None:
         run_command("Cancel Entry", lambda: db.apply_market_command(game_id, "CANCEL_ENTRY", reason), connected)
     if cols[3].button("Force Conservative", use_container_width=True, disabled=not unlock_detail):
         run_command("Force Conservative", lambda: db.apply_market_command(game_id, "FORCE_CONSERVATIVE_MARKET", reason), connected)
+    remote_cols = st.columns(2)
+    if remote_cols[0].button("Cancel Passives", use_container_width=True, disabled=not unlock_detail):
+        run_command("Cancel Passives", lambda: db.apply_market_command(game_id, "CANCEL_MARKET_PASSIVES", reason), connected)
+    if remote_cols[1].button("Clear Remote Controls", use_container_width=True, disabled=not unlock_detail):
+        run_command("Clear Remote Controls", lambda: db.apply_market_command(game_id, "CLEAR_MARKET_CONTROLS", reason), connected)
     decision = resolve_operator_decision(game_id)
     st.caption(
         f"Local execution override: {decision.game_decision.upper()} | "

@@ -1,4 +1,5 @@
 alter table live_market_snapshots add column if not exists updated_at timestamptz not null default now();
+alter table market_controls add column if not exists cancel_passive_orders boolean not null default false;
 alter table live_market_snapshots add column if not exists home_team text;
 alter table live_market_snapshots add column if not exists away_team text;
 alter table live_market_snapshots add column if not exists selected_team text;
