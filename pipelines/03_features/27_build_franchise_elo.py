@@ -123,9 +123,8 @@ def main(start_year: int, end_year: int):
               f"team_games={len(season_df)} franchises={n_fids}")
         print(f"  wrote: {out_path}")
 
-        expected = 13 if y == 2025 else 12
-        if n_fids != expected:
-            print(f"  WARNING: expected {expected} franchises, got {n_fids}")
+        if n_fids == 0:
+            raise ValueError(f"{y}: no franchises emitted")
 
     # Write combined
     combined_rows = []

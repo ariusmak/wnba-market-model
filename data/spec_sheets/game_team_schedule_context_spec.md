@@ -402,7 +402,7 @@ Else:
 
 ### `is_b2b_pre`
 \[
-is\_b2b\_pre = 1 \iff days\_rest\_pre = 0
+is\_b2b\_pre = 1 \iff \text{previous game exists and } days\_rest\_pre = 0
 \]
 
 ### `games_last_4_days_pre`

@@ -2,12 +2,13 @@ import argparse
 import json
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from srwnba.config import load_config
 from srwnba.client import SportradarClient
 from srwnba.endpoints import EndpointConfig, game_summary
+from srwnba.storage.bronze import save_bronze
 
 
 def load_latest_schedule(year: int, season_type: str) -> dict:
@@ -34,14 +35,6 @@ def already_fetched_game_ids() -> set[str]:
     return out
 
 
-def save_bronze_direct(data: dict, prefix: str, out_dir: Path) -> Path:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    out_path = out_dir / f"{prefix}__{ts}.json"
-    out_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    return out_path
-
-
 def is_quota_or_access_error(msg: str) -> bool:
     m = msg.lower()
     return (
@@ -61,6 +54,7 @@ def main(
     access_level: str = "trial",
     sleep_s: float = 1.25,
     only_closed: bool = False,
+    force_refresh_recent_days: int = 0,
 ):
     season_type = season_type.upper().strip()
     if season_type not in {"REG", "PST", "PRE"}:
@@ -78,6 +72,9 @@ def main(
 
     fetched = already_fetched_game_ids()
     print(f"already have summaries for {len(fetched)} games (any year/type)")
+    force_recent_ids = recent_game_ids(games, force_refresh_recent_days)
+    if force_recent_ids:
+        print(f"force-refreshing {len(force_recent_ids)} recent closed summary game(s)")
 
     cfg = load_config()
     client = SportradarClient(cfg)
@@ -89,7 +86,7 @@ def main(
     stop_reason = None
 
     for i, gid in enumerate(game_ids, start=1):
-        if gid in fetched:
+        if gid in fetched and gid not in force_recent_ids:
             skip += 1
             continue
 
@@ -97,8 +94,22 @@ def main(
             print(f"[{i}/{len(game_ids)}] (ok={ok} skip={skip} fail={fail})")
 
         try:
-            data = client.get_json(game_summary(ep, gid))  # /games/{game_id}/summary.json
-            out = save_bronze_direct(data, f"game_summary__{gid}", Path("data/bronze"))
+            url = game_summary(ep, gid)
+            data = client.get_json(url)  # /games/{game_id}/summary.json
+            out = Path(save_bronze(
+                data,
+                "data/bronze",
+                f"game_summary__{gid}",
+                source="sportradar",
+                endpoint="game_summary",
+                request_url=url,
+                request_params={
+                    "year": year,
+                    "season_type": season_type,
+                    "access_level": access_level,
+                    "game_id": gid,
+                },
+            ))
             ok += 1
             fetched.add(gid)
 
@@ -122,6 +133,26 @@ def main(
         print("STOP_REASON:", stop_reason)
 
 
+def recent_game_ids(games: list[dict], lookback_days: int) -> set[str]:
+    if lookback_days <= 0:
+        return set()
+    cutoff = datetime.now(timezone.utc).date() - timedelta(days=lookback_days)
+    out: set[str] = set()
+    for game in games:
+        gid = game.get("id")
+        scheduled_raw = game.get("scheduled")
+        status = str(game.get("status") or "").lower()
+        if not gid or not scheduled_raw or status != "closed":
+            continue
+        try:
+            scheduled = datetime.fromisoformat(str(scheduled_raw).replace("Z", "+00:00")).astimezone(timezone.utc)
+        except Exception:
+            continue
+        if scheduled.date() >= cutoff:
+            out.add(str(gid))
+    return out
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--year", type=int, required=True)
@@ -133,6 +164,15 @@ if __name__ == "__main__":
         action="store_true",
         help="Only fetch games marked status=closed in schedule (optional).",
     )
+    ap.add_argument(
+        "--force-refresh-recent-days",
+        type=int,
+        default=0,
+        help=(
+            "Re-pull closed summaries whose scheduled date is within this many "
+            "UTC days, even if a prior bronze payload exists."
+        ),
+    )
     args = ap.parse_args()
 
     main(
@@ -141,4 +181,5 @@ if __name__ == "__main__":
         access_level=args.access_level,
         sleep_s=args.sleep_s,
         only_closed=args.only_closed,
+        force_refresh_recent_days=args.force_refresh_recent_days,
     )

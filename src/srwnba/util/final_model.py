@@ -10,10 +10,8 @@ All hyperparameters are imported from organized/config/final_hyperparams.py
 
 Training procedure:
   1. Load training CSV, drop cold-start rows (home/away p1 m_ewma == 0)
-  2. Early-stop split: all years except last → ES-train, last year → ES-val
-  3. Train up to 3000 rounds with early stopping (patience=150) to find best_round
-  4. Retrain on ALL training rows for exactly best_round trees
-  5. Model is ready to predict
+  2. Train on ALL remaining rows for XGB_PRODUCTION_NUM_BOOST_ROUND trees
+  3. Model is ready to predict
 
 Input requirements:
   - Training CSV: any gold-level game_xgboost_input file (e.g. 2015_2024_REGPST.csv)
@@ -22,7 +20,7 @@ Input requirements:
     The 'home_win' label column is NOT required for prediction.
 
 Output:
-  - p_home: calibrated home-win probability (float between 0 and 1)
+  - p_home: production home-win probability (float between 0 and 1)
 
 ──────────────────────────────────────────────────────────────────────
 USAGE — Python (for live trading integration):
@@ -76,16 +74,14 @@ import xgboost as xgb
 #   XGB_PARAMS: dict with max_depth=6, min_child_weight=3, gamma=0.1,
 #               colsample_bytree=0.6, subsample=0.8, reg_lambda=1.0,
 #               reg_alpha=0.0, learning_rate=0.02, seed=42
-#   NUM_BOOST_ROUND: 3000 (max trees before early stopping)
-#   EARLY_STOPPING_ROUNDS: 150 (patience)
+#   XGB_PRODUCTION_NUM_BOOST_ROUND: locked final-fit tree count
 #   N_PLAYERS: 7 (player slots per team)
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "config"))
 from final_hyperparams import (
     XGB_PARAMS,
-    NUM_BOOST_ROUND,
-    EARLY_STOPPING_ROUNDS,
-    N_PLAYERS,
+    XGB_PRODUCTION_NUM_BOOST_ROUND,
 )
+from srwnba.util.model_schema import ELO_PROB_COL, FEAT_COLS, LABEL_COL
 
 # ── Feature definitions ─────────────────────────────────────────────
 # These must exactly match the gold table columns built by the feature
@@ -93,43 +89,7 @@ from final_hyperparams import (
 # per side = 126 player features + 10 form + 12 style + 12 schedule = 160 total.
 # Elo probability is passed via base_margin, NOT as an ordinary feature.
 
-PLAYER_FEATS = [
-    "m_ewma_pre", "q_pre", "days_since_first_report_pre",
-    "days_since_last_dnp_pre", "consec_dnps_pre", "played_last_game_pre",
-    "minutes_last_game_pre", "days_since_last_played_pre",
-    "injury_present_flag_pre",
-]
-FORM_FEATS = [
-    "net_rtg_ewma_pre", "efg_ewma_pre", "tov_pct_ewma_pre",
-    "orb_pct_ewma_pre", "ftr_ewma_pre",
-]
-STYLE_FEATS = [
-    "off_3pa_rate_pre", "def_3pa_allowed_pre", "off_2pa_rate_pre",
-    "def_2pa_allowed_pre", "off_tov_pct_pre", "def_forced_tov_pre",
-]
-SCHED_FEATS = [
-    "days_rest_pre", "is_b2b_pre", "games_last_4_days_pre",
-    "games_last_7_days_pre", "travel_miles_pre", "timezone_shift_hours_pre",
-]
-
-LABEL_COL = "home_win"
-ELO_PROB_COL = "p_elo"
 CLIP_EPS = 1e-6
-
-
-def build_feature_cols(n_players: int) -> list[str]:
-    cols = []
-    for side in ("home", "away"):
-        for slot in range(1, n_players + 1):
-            for feat in PLAYER_FEATS:
-                cols.append(f"{side}_p{slot}_{feat}")
-    for feat in FORM_FEATS + STYLE_FEATS + SCHED_FEATS:
-        cols.append(f"home_{feat}")
-        cols.append(f"away_{feat}")
-    return cols
-
-
-FEAT_COLS = build_feature_cols(N_PLAYERS)
 
 
 def clip_probs(p):
@@ -179,36 +139,22 @@ class FinalModel:
     """Train once on full training data, then predict individual games."""
 
     def __init__(self, train_csv: str | Path):
-        """Load training CSV, early-stop to find best round, retrain on all data.
+        """Load training CSV and train the locked production model.
 
-        Training procedure (matches trading_results2 / calibration_run):
-          1. Split: 2015–(last_year-1) for ES-train, last_year for ES-val
-          2. Train with early stopping → best_round
-          3. Retrain on ALL training rows for exactly best_round trees
+        Production training uses all cold-start-filtered rows from the provided
+        CSV and exactly XGB_PRODUCTION_NUM_BOOST_ROUND trees. The tree count is
+        not reselected from the final season in the training data.
         """
         train_df = pd.read_csv(train_csv)
         train_df = train_df[_cold_start_mask(train_df)].reset_index(drop=True)
         print(f"[FinalModel] Training rows (cold-start filtered): {len(train_df)}")
 
-        # Split: use last year in training set as ES-validation
-        max_season = train_df["season"].max()
-        es_val = train_df[train_df["season"] == max_season]
-        es_train = train_df[train_df["season"] < max_season]
-        print(f"[FinalModel] ES-train: {len(es_train)} rows  |  ES-val ({max_season}): {len(es_val)} rows")
+        # Production tree count is locked by validation. Do not reselect it from
+        # the last season in the training CSV, which may be a tiny partial year.
+        self.best_round = int(XGB_PRODUCTION_NUM_BOOST_ROUND)
+        self.best_round_source = "locked_config"
+        print(f"[FinalModel] Locked production trees: {self.best_round}")
 
-        # Step 1: early-stop run
-        dm_train = _make_dmatrix(es_train, FEAT_COLS)
-        dm_val = _make_dmatrix(es_val, FEAT_COLS)
-        m_es = xgb.train(
-            XGB_PARAMS, dm_train, NUM_BOOST_ROUND,
-            evals=[(dm_val, "val")],
-            early_stopping_rounds=EARLY_STOPPING_ROUNDS,
-            verbose_eval=False,
-        )
-        self.best_round = m_es.best_iteration + 1
-        print(f"[FinalModel] Best round from early stopping: {self.best_round}")
-
-        # Step 2: retrain on ALL training data for best_round trees
         dm_full = _make_dmatrix(train_df, FEAT_COLS)
         self.model = xgb.train(
             XGB_PARAMS, dm_full, self.best_round, verbose_eval=False

@@ -1,4 +1,5 @@
 import argparse
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -19,17 +20,37 @@ def league_q_prev_season(year: int) -> float:
     If prev season file doesn't exist (e.g., 2015), return 0.0.
     """
     prev_path = Path(f"data/silver/player_game_box_{year-1}_REGPST.csv")
-    if year <= 2015 or not prev_path.exists():
+    if year <= 2015:
         return 0.0
 
-    df = pd.read_csv(prev_path)
-    df["minutes"] = pd.to_numeric(df.get("minutes"), errors="coerce").fillna(0.0)
-    df["eff"] = pd.to_numeric(df.get("eff"), errors="coerce").fillna(0.0)
+    if prev_path.exists():
+        df = pd.read_csv(prev_path)
+        df["minutes"] = pd.to_numeric(df.get("minutes"), errors="coerce").fillna(0.0)
+        df["eff"] = pd.to_numeric(df.get("eff"), errors="coerce").fillna(0.0)
 
-    denom = float(df["minutes"].sum())
-    if denom <= 0:
+        denom = float(df["minutes"].sum())
+        if denom <= 0:
+            return 0.0
+        return float(df["eff"].sum() / denom)
+
+    state_path = Path(f"data/silver/player_state_history_{year-1}.csv")
+    if not state_path.exists():
         return 0.0
-    return float(df["eff"].sum() / denom)
+
+    state = pd.read_csv(state_path, usecols=["player_id", "asof_ts", "m_ewma", "q"])
+    state["asof_ts"] = pd.to_datetime(state["asof_ts"], utc=True, errors="coerce")
+    state = state.dropna(subset=["player_id", "asof_ts"]).sort_values(
+        ["player_id", "asof_ts"], kind="stable"
+    )
+    final = state.groupby("player_id", as_index=False).tail(1).copy()
+    final["m_ewma"] = pd.to_numeric(final["m_ewma"], errors="coerce").fillna(0.0)
+    final["q"] = pd.to_numeric(final["q"], errors="coerce").fillna(0.0)
+    denom = float(final["m_ewma"].sum())
+    if denom > 0:
+        return float((final["q"] * final["m_ewma"]).sum() / denom)
+    if len(final) == 0:
+        return 0.0
+    return float(final["q"].mean())
 
 
 def asof_join_player_state_strict(roster: pd.DataFrame, state: pd.DataFrame) -> pd.DataFrame:
@@ -275,9 +296,18 @@ def main(year: int):
     if dup != 0:
         raise ValueError(f"Duplicate PK rows found: {dup}")
 
-    Path("data/silver").mkdir(parents=True, exist_ok=True)
-    out_path = Path(f"data/silver/game_team_player_{year}_REGPST.csv")
+    out_dir = Path("data/silver_plus")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"game_team_player_{year}_REGPST.csv"
     out.to_csv(out_path, index=False)
+
+    legacy_path = Path(f"data/silver/game_team_player_{year}_REGPST.csv")
+    if legacy_path.exists():
+        legacy_archive_dir = Path("data/runs/layer_migrations/legacy_silver_gamewise_features")
+        legacy_archive_dir.mkdir(parents=True, exist_ok=True)
+        legacy_archive = legacy_archive_dir / legacy_path.name
+        shutil.move(str(legacy_path), str(legacy_archive))
+        print("archived legacy silver game-wise feature table:", legacy_archive)
 
     print(f"{year}: rows={len(out)} games={out['game_id'].nunique()} players={out['player_id'].nunique()}")
     print(f"q_default_prev_season={q_default:.6f}")

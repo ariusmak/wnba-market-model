@@ -317,9 +317,8 @@ def main(year: int):
     print(f"  wrote: {out_path}")
     print(f"  wrote: {finals_path}")
 
-    expected = 13 if year == 2025 else 12
-    if n_franchises != expected:
-        print(f"  WARNING: expected {expected} franchises, got {n_franchises}")
+    if n_franchises == 0:
+        raise ValueError(f"{year}: no franchises emitted")
 
 
 if __name__ == "__main__":

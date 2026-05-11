@@ -2,7 +2,7 @@ import argparse
 import sys
 from pathlib import Path
 
-# Allow importing srwnba when run from project root (e.g. python notebooks/19_...py)
+# Allow importing srwnba when run from project root.
 _root = Path(__file__).resolve().parents[2]
 _src = _root / "src"
 if _src.exists() and str(_src) not in sys.path:
@@ -16,7 +16,9 @@ from srwnba.util.elo import EloParams, apply_carryover, elo_prob, update_one_gam
 def load_outcomes(year: int) -> pd.DataFrame:
     p = Path(f"data/silver/game_outcomes_{year}_REGPST.csv")
     if not p.exists():
-        raise FileNotFoundError(f"Missing {p}. Run: python notebooks/17_build_game_outcomes_year.py --year {year}")
+        raise FileNotFoundError(
+            f"Missing {p}. Run: python pipelines/02_parsing/17_build_game_outcomes_year.py --year {year}"
+        )
     df = pd.read_csv(p)
     df["scheduled"] = pd.to_datetime(df["scheduled"], utc=True, errors="coerce")
     df = df[df["home_win"].notna()].copy()

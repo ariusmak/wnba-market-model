@@ -45,6 +45,8 @@ CITY_TZ_OFFSET: dict[str, int] = {
     "Uncasville": -4,
     "Dallas": -5,
     "Fort Worth": -5,
+    "Golden State": -7,
+    "Indiana": -4,
     "Indianapolis": -4,
     "Las Vegas": -7,
     "Los Angeles": -7,
@@ -79,6 +81,7 @@ CITY_TZ_OFFSET: dict[str, int] = {
     "Sacramento": -7,    # PT
     "San Jose": -7,      # PT
     "Long Beach": -7,    # PT
+    "Minnesota": -5,
     "Portland": -7,      # PT
     "Salt Lake City": -6, # MT (Utah observes DST) -- summer = MDT = UTC-6
     "St. Paul": -5,      # Minnesota Lynx (CT)
@@ -102,12 +105,15 @@ CITY_COORDS: dict[str, tuple[float, float]] = {
     "Dallas": (32.7767, -96.7970),
     "Arlington": (32.7357, -97.1081),     # College Park Center
     "Fort Worth": (32.7555, -97.3308),
+    "Golden State": (37.7749, -122.4194),  # Valkyries / Chase Center market fallback
+    "Indiana": (39.7684, -86.1581),
     "Indianapolis": (39.7684, -86.1581),
     "Las Vegas": (36.1699, -115.1398),
     "Paradise": (36.0840, -115.1522),     # T-Mobile Arena
     "Los Angeles": (34.0522, -118.2437),
     "Anaheim": (33.8366, -117.9143),
     "Long Beach": (33.7701, -118.1937),
+    "Minnesota": (44.9778, -93.2650),
     "Minneapolis": (44.9778, -93.2650),
     "St. Paul": (44.9537, -93.0900),
     "New York": (40.7128, -74.0060),
@@ -185,14 +191,14 @@ def ts_from_name(name: str) -> str:
     return parts[2].replace(".json", "") if len(parts) >= 3 else ""
 
 
-def pick_latest_game_summary_files(game_ids: set) -> dict:
+def pick_latest_game_summary_files(game_ids: set | None = None) -> dict:
     best: dict = {}
     for p in Path("data/bronze").glob("game_summary__*__*.json"):
         parts = p.name.split("__")
         if len(parts) < 3:
             continue
         gid = parts[1]
-        if gid not in game_ids:
+        if game_ids is not None and gid not in game_ids:
             continue
         ts = ts_from_name(p.name)
         if gid not in best or ts > best[gid][0]:
@@ -238,31 +244,48 @@ def build_maps(all_game_ids: set) -> tuple[dict, dict]:
     """
     Returns:
       game_venue_map: {game_id: {"city", "lat", "lng"}}
-      team_home_map:  {team_id: {"city", "lat", "lng"}}  (from home-game venues)
+      team_home_map:  {team_id: {"city", "lat", "lng"}}  (home venues, then market fallback)
     """
-    latest = pick_latest_game_summary_files(all_game_ids)
+    latest_current = pick_latest_game_summary_files(all_game_ids)
+    latest_all = pick_latest_game_summary_files()
 
     game_venue_map: dict = {}
-    # team_id -> list of (city, lat, lng) from their HOME games
-    team_home_candidates: dict = defaultdict(list)
+    # team_id -> list of (city, lat, lng) from their HOME games.
+    # At season start, a team can appear only as an away team, so keep a separate
+    # market fallback to avoid null travel origins until its first home summary.
+    venue_home_candidates: dict = defaultdict(list)
+    market_home_candidates: dict = defaultdict(list)
 
-    for gid, path in latest.items():
+    for gid, path in latest_all.items():
         info = extract_venue_and_markets(path)
         city = info["venue_city"]
         lat = info["venue_lat"]
         lng = info["venue_lng"]
 
-        if city and lat is not None and lng is not None:
+        if gid in latest_current and city and lat is not None and lng is not None:
             game_venue_map[gid] = {"city": city, "lat": lat, "lng": lng}
 
-        # Home team's market -> home city candidate
+        # Home venue is the preferred home-location candidate.
         if info["home_id"] and city and lat is not None:
-            team_home_candidates[info["home_id"]].append((city, lat, lng))
+            venue_home_candidates[info["home_id"]].append((city, lat, lng))
+
+        # Team market is a fallback for teams that have not yet hosted a game in
+        # the available bronze set.
+        for side in ("home", "away"):
+            team_id = info[f"{side}_id"]
+            market = info[f"{side}_market"]
+            coords = city_coords(market) if market else None
+            if team_id and market and coords:
+                market_home_candidates[team_id].append((market, coords[0], coords[1]))
 
     # For each team, pick their most common home venue city
     from collections import Counter
     team_home_map: dict = {}
-    for tid, candidates in team_home_candidates.items():
+    team_ids = set(venue_home_candidates) | set(market_home_candidates)
+    for tid in team_ids:
+        candidates = venue_home_candidates.get(tid) or market_home_candidates.get(tid, [])
+        if not candidates:
+            continue
         city_counts = Counter(c[0] for c in candidates)
         home_city = city_counts.most_common(1)[0][0]
         # Prefer JSON lat/lng; fall back to static dict
@@ -386,10 +409,10 @@ def main(year: int):
             # Rest features
             if prev_game_date is not None:
                 days_rest = (gdate - prev_game_date).days - 1
+                is_b2b = 1 if days_rest == 0 else 0
             else:
                 days_rest = 0
-
-            is_b2b = 1 if days_rest == 0 else 0
+                is_b2b = 0
 
             # games in last N days (strictly before current game date)
             games_last_4 = sum(

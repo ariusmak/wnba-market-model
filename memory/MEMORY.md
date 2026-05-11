@@ -1,0 +1,3 @@
+- [Live deployment constraints](project_live_deployment_constraints.md) — sizing, thresholds, and execution rules frozen for 2026
+- [Live system architecture](project_live_system_architecture.md) — what's built under srwnba/live + pipelines/07_live, and what still blocks
+- [Production build log](production_build_log.md) - audit trail for production-readiness implementation, safety checks, verification, and known gaps

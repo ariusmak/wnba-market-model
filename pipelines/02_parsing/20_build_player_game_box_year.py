@@ -90,7 +90,7 @@ def main(year: int):
     played_path = Path(f"data/silver/played_games_{year}_REGPST.csv")
     if not played_path.exists():
         raise FileNotFoundError(
-            f"Missing {played_path}. Run notebooks/14_build_played_games_manifest_year.py --year {year} first."
+            f"Missing {played_path}. Run pipelines/02_parsing/14_build_played_games_manifest_year.py --year {year} first."
         )
 
     played = pd.read_csv(played_path)

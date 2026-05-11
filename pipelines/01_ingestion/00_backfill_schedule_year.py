@@ -1,5 +1,4 @@
 import argparse
-import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -7,6 +6,7 @@ from pathlib import Path
 from srwnba.config import load_config
 from srwnba.client import SportradarClient
 from srwnba.endpoints import EndpointConfig, season_schedule
+from srwnba.storage.bronze import save_bronze
 
 
 def main(year: int, season_type: str, access_level: str = "trial"):
@@ -38,11 +38,21 @@ def main(year: int, season_type: str, access_level: str = "trial"):
     data = client.get_json(url)
     print("STEP 6: fetched keys:", list(data.keys())[:20])
 
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    out_path = Path("data/bronze") / f"schedule_{year}_{season_type}__{ts}.json"
-    out_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    out_path = save_bronze(
+        data,
+        "data/bronze",
+        f"schedule_{year}_{season_type}",
+        source="sportradar",
+        endpoint="season_schedule",
+        request_url=url,
+        request_params={
+            "year": year,
+            "season_type": season_type,
+            "access_level": access_level,
+        },
+    )
 
-    print("STEP 7: saved:", out_path.resolve())
+    print("STEP 7: saved:", Path(out_path).resolve())
     print("games:", len(data.get("games", [])))
 
 

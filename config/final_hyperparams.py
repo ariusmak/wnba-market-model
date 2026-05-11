@@ -41,3 +41,9 @@ XGB_PARAMS = dict(
 )
 NUM_BOOST_ROUND       = 3000
 EARLY_STOPPING_ROUNDS = 150
+
+# Production final-fit tree count. This was selected during the locked
+# validation pass (2015-2024 sanity split best round = 88) and is now fixed.
+# Runtime/live training must retrain on all available settled rows using this
+# exact count; do not reselect it from a partial live season.
+XGB_PRODUCTION_NUM_BOOST_ROUND = 88

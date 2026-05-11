@@ -171,18 +171,18 @@ This is the **role / recent usage** component of player strength.
 ### Locked design
 EWMA half-life in games:
 \[
-h_M = 5
+h_M = 7
 \]
 
 ### Equivalent EWMA smoothing parameter
 \[
-\lambda_M = 1 - 2^{-1/5}
+\lambda_M = 1 - 2^{-1/7}
 \]
 
 Numerically:
 
 \[
-\lambda_M \approx 0.129449
+\lambda_M \approx 0.094276
 \]
 
 ### Exact recursive definition
@@ -209,17 +209,20 @@ Whenever a player’s team completes a game, update `m_ewma` once using that gam
 Then carry that value forward daily until the next game update.
 
 ### Season start initialization
-At the start of a new season, initialize from prior-season minutes information.
+At the start of a new season, initialize from the prior-season player state when available. The production builder must try, in order:
 
-A reasonable implementation consistent with prior decisions is:
+1. prior-year silver player box score data
+2. prior-year `data/silver/player_state_history_{year-1}.csv`
+
+The intended carried value is the player's final prior-season `m_ewma`, not a cold zero and not an arbitrary model-input slot value.
 
 \[
-m^{EWMA}_{i,\text{season start}} = \text{previous season average minutes}
+m^{EWMA}_{i,\text{season start}} = m^{EWMA}_{i,\text{final prior-season state}}
 \]
 
 If previous-season minutes are unavailable:
-- use 0 for true rookies / new players, or
-- use league-average bench minutes if you later decide to soften rookies
+- use 0 for true rookies / new players
+- do not zero out veterans merely because a box-score artifact is missing if a prior state-history artifact exists
 
 ### Important interpretation
 `m_ewma` is **role-sensitive**, not quality-sensitive.  
@@ -268,6 +271,8 @@ q^{prev}_i = \frac{EFF^{prevseason}_i}{MIN^{prevseason}_i}
 \]
 
 if previous-season minutes exist.
+
+Production source fallback is the same as minutes state: use prior-year box score data when available, otherwise use the final row from prior-year `player_state_history`. This prevents a live-year rebuild from cold-starting veteran player priors just because a convenience box-score artifact is absent.
 
 ### Prior fallback
 If the player has no usable previous-season minutes, use a fallback prior:
@@ -558,12 +563,12 @@ For convenience, here are the locked formulas in one place.
 ## EWMA minutes
 Half-life:
 \[
-h_M = 5
+h_M = 7
 \]
 
 Smoothing:
 \[
-\lambda_M = 1 - 2^{-1/5}
+\lambda_M = 1 - 2^{-1/7}
 \]
 
 Update:

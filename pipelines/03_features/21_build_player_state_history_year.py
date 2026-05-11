@@ -1,13 +1,20 @@
 import argparse
 from pathlib import Path
+import sys
 
 import numpy as np
 import pandas as pd
 
-# Locked params from spec
-LAMBDA_M = 1 - 2 ** (-1 / 7)   # EWMA half-life 7 games (Stage 1 tuning winner)
-TAU_Q = 150                    # q prior strength
-INJ_WINDOW_DAYS = 14           # injury inclusion window
+_root = Path(__file__).resolve().parents[2]
+_config = _root / "config"
+if _config.exists() and str(_config) not in sys.path:
+    sys.path.insert(0, str(_config))
+
+from final_hyperparams import H_M, L_INJ, TAU
+
+LAMBDA_M = 1 - 2 ** (-1 / H_M)
+TAU_Q = TAU
+INJ_WINDOW_DAYS = L_INJ
 
 
 def load_csv(path: str) -> pd.DataFrame:
@@ -106,6 +113,58 @@ def compute_prev_season_priors(prev_box: pd.DataFrame) -> tuple[pd.Series, float
     return q_prev, q_league, m_prev_avg
 
 
+def compute_prev_state_priors(prev_state: pd.DataFrame) -> tuple[pd.Series, float, pd.Series]:
+    """
+    Fallback bootstrap from the prior season's final player-state table.
+
+    This keeps production live seasons valid when raw prior-year box-score
+    details are unavailable but silver `player_state_history_{year-1}.csv`
+    remains.
+    `game_team_player` remains the full player feature store; gold chooses the
+    top N player states later.
+    """
+    tmp = prev_state.copy()
+    tmp["player_id"] = tmp["player_id"].astype(str)
+    tmp["asof_ts"] = pd.to_datetime(tmp["asof_ts"], utc=True, errors="coerce")
+    tmp = tmp.dropna(subset=["player_id", "asof_ts"]).sort_values(
+        ["player_id", "asof_ts"], kind="stable"
+    )
+    final = tmp.groupby("player_id", as_index=True).tail(1).copy()
+    final["q"] = pd.to_numeric(final["q"], errors="coerce").fillna(0.0).clip(lower=0.0)
+    final["m_ewma"] = pd.to_numeric(final["m_ewma"], errors="coerce").fillna(0.0).clip(lower=0.0)
+
+    q_prev = final.set_index("player_id")["q"]
+    m_prev = final.set_index("player_id")["m_ewma"]
+    weights = final["m_ewma"]
+    if float(weights.sum()) > 0:
+        q_league = float((final["q"] * weights).sum() / weights.sum())
+    elif len(final) > 0:
+        q_league = float(final["q"].mean())
+    else:
+        q_league = 0.0
+    return q_prev, q_league, m_prev
+
+
+def load_prev_player_priors(year: int) -> tuple[pd.Series, float, pd.Series, str]:
+    if year <= 2015:
+        return pd.Series(dtype=float), 0.0, pd.Series(dtype=float), "none_first_modeled_year"
+
+    prev_box_path = Path(f"data/silver/player_game_box_{year-1}_REGPST.csv")
+    if prev_box_path.exists():
+        prev_box = load_csv(str(prev_box_path))
+        prev_box["player_id"] = prev_box["player_id"].astype(str)
+        q_prev_by_player, q_league_prev, m_prev_avg_by_player = compute_prev_season_priors(prev_box)
+        return q_prev_by_player, q_league_prev, m_prev_avg_by_player, str(prev_box_path)
+
+    prev_state_path = Path(f"data/silver/player_state_history_{year-1}.csv")
+    if prev_state_path.exists():
+        prev_state = load_csv(str(prev_state_path))
+        q_prev_by_player, q_league_prev, m_prev_avg_by_player = compute_prev_state_priors(prev_state)
+        return q_prev_by_player, q_league_prev, m_prev_avg_by_player, str(prev_state_path)
+
+    return pd.Series(dtype=float), 0.0, pd.Series(dtype=float), "missing_prior_source"
+
+
 def build_injury_episode_summary(year: int) -> pd.DataFrame:
     """
     Per-episode summary; Decision A: DNP substitutes for missing report.
@@ -189,7 +248,7 @@ def build_player_game_features_for_year(year: int) -> pd.DataFrame:
     return out.sort_values(["player_id", "scheduled", "game_id"], kind="stable")
 
 
-def main(year: int):
+def main(year: int, through_date: str | None = None):
     box = load_csv(f"data/silver/player_game_box_{year}_REGPST.csv")
     played = load_csv(f"data/silver/played_games_{year}_REGPST.csv")
 
@@ -199,6 +258,10 @@ def main(year: int):
 
     season_start_day = season_start_dt.floor("D")
     season_end_day = season_end_dt.floor("D")
+    if through_date:
+        through_day = pd.Timestamp(through_date, tz="UTC").floor("D")
+        if pd.notna(through_day) and through_day > season_end_day:
+            season_end_day = through_day
 
     # Seed timestamp strictly before first game timestamp:
     # midnight on first game date minus 1 second
@@ -220,15 +283,7 @@ def main(year: int):
     raw_ids = set(pg["player_id"].dropna().astype(str)) | set(box["player_id"].dropna().astype(str))
     players = pd.Index(sorted(pid for pid in raw_ids if isinstance(pid, str) and pid not in ("nan", "None", "")))
 
-    # Priors from previous season
-    if (year - 1) >= 2015 and Path(f"data/silver/player_game_box_{year-1}_REGPST.csv").exists():
-        prev_box = load_csv(f"data/silver/player_game_box_{year-1}_REGPST.csv")
-        prev_box["player_id"] = prev_box["player_id"].astype(str)
-        q_prev_by_player, q_league_prev, m_prev_avg_by_player = compute_prev_season_priors(prev_box)
-    else:
-        q_prev_by_player = pd.Series(dtype=float)
-        q_league_prev = 0.0
-        m_prev_avg_by_player = pd.Series(dtype=float)
+    q_prev_by_player, q_league_prev, m_prev_avg_by_player, prior_source = load_prev_player_priors(year)
 
     # Seed values:
     m_seed = players.to_series().map(m_prev_avg_by_player).fillna(0.0)
@@ -531,6 +586,7 @@ def main(year: int):
     out.to_csv(out_path, index=False)
 
     print(f"{year}: rows={len(out)} players={out['player_id'].nunique()} asof_ts={out['asof_ts'].nunique()}")
+    print(f"prior_source: {prior_source}  q_league_prev={q_league_prev:.6f}")
     print("seed_ts:", season_start_seed_ts)
     print("wrote:", out_path)
 
@@ -538,5 +594,10 @@ def main(year: int):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--year", type=int, required=True)
+    ap.add_argument(
+        "--through-date",
+        default=None,
+        help="Optional YYYY-MM-DD date through which to carry daily state for live inference.",
+    )
     args = ap.parse_args()
-    main(args.year)
+    main(args.year, through_date=args.through_date)

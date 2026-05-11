@@ -8,6 +8,14 @@ This document specifies the **downstream layer** that is built from:
 
 This table is the canonical **pregame player snapshot by game**.
 
+Production path:
+
+```text
+data/silver_plus/game_team_player_{year}_REGPST.csv
+```
+
+It lives in `silver_plus` because it is a game-as-of feature-family table. The daily/as-of upstream `player_state_history` stays in `data/silver`.
+
 It is the bridge between:
 - upstream player-state history
 - and the later model-ready flattened / slotted game-level table

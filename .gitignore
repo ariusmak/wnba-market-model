@@ -1,5 +1,12 @@
 .env
+.streamlit/secrets.toml
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
 .claude/
+data/live_logs/
+data/runs/
+data/live_features/
+data/bronze/
+data/bronze_runs/
+data/kalshi/kalshi_trades.csv
