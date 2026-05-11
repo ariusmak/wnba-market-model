@@ -31,6 +31,10 @@ Remote dashboard wiring is controlled explicitly with `--control-plane-mode`:
 - `supabase-live` fails closed if Supabase controls cannot be read and rechecks the merged local+Supabase decision before every Kalshi order attempt.
 - Remote per-game controls can cancel passive resting orders without blocking IOC sweeps; clearing remote controls does not clear local JSON abort files.
 
+The live daemon also publishes a `bot_heartbeat` control acknowledgment in
+Supabase modes, so global dashboard commands are observable even before any
+per-game route loop is running.
+
 Local JSON controls remain the final emergency brake in every mode; Supabase can only add restrictions or lower caps.
 
 When available cash is binding across multiple otherwise eligible live tickets, cash allocation must use `src/srwnba/live/canonical/cash_priority.py`: exact marginal expected log growth per dollar, with current fills plus reserved open orders included as existing position cost.

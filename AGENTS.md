@@ -122,7 +122,7 @@ All live Kalshi market snapshots must pass `srwnba.live.canonical.kalshi_mapping
 
 Due `market_t20` jobs record Kalshi side/complement/settlement mapping as a preflight audit check, but snapshot/mapping issues must not block the data refresh itself. Prefer the daemon's cached snapshot; if mapping is unavailable, write the issue into the run packet. Execution remains blocked until mapping is confirmed.
 
-The live daemon health surface is `data/runs/live_daemon/health_latest.json`. It must expose `ok`/`degraded`/`failed`, current checks, failure counters, market freshness, refresh-worker freshness, execution-supervisor freshness, and active/open market counts. Do not let diagnostic `--ignore-lock` runs overwrite global health or heartbeat files.
+The live daemon health surface is `data/runs/live_daemon/health_latest.json`. It must expose `ok`/`degraded`/`failed`, current checks, failure counters, market freshness, refresh-worker freshness, execution-supervisor freshness, control-plane acknowledgment health, and active/open market counts. In Supabase modes, the daemon must publish `bot_heartbeat` so dashboard commands can be acknowledged even when no per-game route worker is active. Do not let diagnostic `--ignore-lock` runs overwrite global health or heartbeat files.
 
 ## 4. Validation Reference Numbers
 

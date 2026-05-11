@@ -178,6 +178,11 @@ The worker should continuously publish:
 - `order_events`
 - `system_alerts` for important failures or stale data.
 
+The always-on daemon publishes this heartbeat too, even when no per-game route
+worker is currently running. That keeps dashboard command acknowledgment
+observable during quiet periods. Route workers still publish their own
+heartbeats while active and re-read controls before live order submission.
+
 ## Dashboard UX Features
 
 The Control Room includes:

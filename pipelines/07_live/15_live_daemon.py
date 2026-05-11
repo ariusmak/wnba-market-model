@@ -41,6 +41,8 @@ from srwnba.live.canonical.kalshi_mapping import (  # noqa: E402
     filter_open_wnba_moneyline_markets,
     filter_wnba_moneyline_markets,
 )
+from srwnba.live.canonical.operator_control import OperatorDecision  # noqa: E402
+from srwnba.live.control_plane import ControlPlaneBridge, merge_control_decision  # noqa: E402
 
 RUN_ROOT = REPO_ROOT / "data" / "runs" / "live_daemon"
 SESSION_ROOT = RUN_ROOT / "sessions"
@@ -143,6 +145,7 @@ def main() -> None:
     )
 
     series_tickers = tuple(args.series_ticker or DEFAULT_SERIES)
+    control_plane = ControlPlaneBridge(mode=args.control_plane_mode, bot_id=args.control_plane_bot_id)
     last_market_poll = 0.0
     last_worker_check = 0.0
     last_execution_check = 0.0
@@ -305,6 +308,13 @@ def main() -> None:
                     last_execution_check = now_mono
 
             if due(now_mono, last_heartbeat, args.heartbeat_s):
+                publish_control_plane_heartbeat(
+                    bridge=control_plane,
+                    state=state,
+                    skip_market_api=args.skip_market_api,
+                    last_error=last_error,
+                    logger=logger,
+                )
                 write_heartbeat(
                     run_id=run_id,
                     session_dir=session_dir,
@@ -316,6 +326,7 @@ def main() -> None:
                     injury_poll_max_age_minutes=args.injury_poll_max_age_minutes,
                     execution_check_s=args.execution_check_s,
                     heartbeat_s=args.heartbeat_s,
+                    control_plane_mode=args.control_plane_mode,
                     skip_market_api=args.skip_market_api,
                     disable_worker=args.disable_worker,
                     disable_execution_supervisor=args.disable_execution_supervisor,
@@ -675,6 +686,86 @@ def run_execution_supervisor(
     return result
 
 
+def publish_control_plane_heartbeat(
+    *,
+    bridge: ControlPlaneBridge,
+    state: dict[str, Any],
+    skip_market_api: bool,
+    last_error: str | None,
+    logger: JsonlLogger,
+) -> None:
+    if not bridge.enabled:
+        state["last_control_plane_heartbeat"] = {
+            "mode": bridge.mode,
+            "enabled": False,
+            "published_at_utc": utc_now().isoformat(),
+            "success": True,
+            "reason": "local_only",
+        }
+        save_state(state)
+        return
+
+    remote_snapshot = bridge.read_controls("__daemon__")
+    local_decision = OperatorDecision(
+        game_id="__daemon__",
+        trade_allowed=True,
+        reason="daemon_heartbeat",
+        auto_trade_enabled=True,
+        risk_mode="normal",
+        game_decision="default",
+        global_control_path="daemon",
+        game_override_path="daemon",
+    )
+    decision = merge_control_decision(
+        game_id="__daemon__",
+        mode=bridge.mode,
+        local_decision=local_decision,
+        remote_snapshot=remote_snapshot,
+        publish_failure_count=bridge.consecutive_publish_failures,
+    )
+    status = "running"
+    if not remote_snapshot.read_ok:
+        status = "control_plane_read_failed"
+    elif not decision.trade_allowed:
+        status = decision.reason
+    elif decision.shadow_mode_enabled:
+        status = "shadow"
+
+    publish_failures_before = bridge.consecutive_publish_failures
+    bridge.publish_heartbeat(
+        decision=decision,
+        status=status,
+        kalshi_connected=not skip_market_api and int(state.get("consecutive_market_poll_failures", 0)) == 0,
+        market_data_connected=bool(state.get("latest_market_snapshot_path")),
+        open_orders_count=0,
+        open_positions_count=0,
+        last_error=last_error or remote_snapshot.error,
+    )
+    success = remote_snapshot.read_ok and bridge.consecutive_publish_failures == 0
+    rec = {
+        "mode": bridge.mode,
+        "enabled": True,
+        "published_at_utc": utc_now().isoformat(),
+        "success": success,
+        "status": status,
+        "bot_id": bridge.bot_id,
+        "read_ok": remote_snapshot.read_ok,
+        "configured": remote_snapshot.configured,
+        "database_connected": remote_snapshot.database_connected,
+        "control_updated_at": remote_snapshot.control_updated_at,
+        "read_at_utc": remote_snapshot.read_at_utc,
+        "error": remote_snapshot.error or bridge.last_publish_error,
+        "publish_failure_count": bridge.consecutive_publish_failures,
+    }
+    state["last_control_plane_heartbeat"] = rec
+    save_state(state)
+    logger.write(
+        "control_plane_heartbeat",
+        **rec,
+        publish_failures_before=publish_failures_before,
+    )
+
+
 def write_heartbeat(
     *,
     run_id: str,
@@ -687,6 +778,7 @@ def write_heartbeat(
     injury_poll_max_age_minutes: float,
     execution_check_s: float,
     heartbeat_s: float,
+    control_plane_mode: str,
     skip_market_api: bool,
     disable_worker: bool,
     disable_execution_supervisor: bool,
@@ -702,6 +794,7 @@ def write_heartbeat(
         injury_poll_max_age_minutes=injury_poll_max_age_minutes,
         execution_check_s=execution_check_s,
         heartbeat_s=heartbeat_s,
+        control_plane_mode=control_plane_mode,
         skip_market_api=skip_market_api,
         disable_worker=disable_worker,
         disable_execution_supervisor=disable_execution_supervisor,
@@ -723,6 +816,7 @@ def write_heartbeat(
         "last_worker_result": state.get("last_worker_result"),
         "last_injury_poll_result": state.get("last_injury_poll_result"),
         "last_execution_supervisor_result": state.get("last_execution_supervisor_result"),
+        "last_control_plane_heartbeat": state.get("last_control_plane_heartbeat"),
         "last_error": last_error,
     }
     if publish_global:
@@ -744,6 +838,7 @@ def build_health(
     injury_poll_max_age_minutes: float,
     execution_check_s: float,
     heartbeat_s: float,
+    control_plane_mode: str,
     skip_market_api: bool,
     disable_worker: bool,
     disable_execution_supervisor: bool,
@@ -761,6 +856,7 @@ def build_health(
 
     add_check("process_running", "ok", "daemon process is executing", pid=os.getpid())
     add_lock_check(checks, run_id, owns_lock=owns_lock)
+    add_control_plane_check(checks, state, control_plane_mode=control_plane_mode)
 
     latest_snapshot_path = state.get("latest_market_snapshot_path")
     latest_snapshot_at = parse_iso_datetime(state.get("latest_market_snapshot_at_utc"))
@@ -1033,6 +1129,7 @@ def build_health(
         "metrics": {
             "uptime_s": uptime_s,
             "heartbeat_interval_s": heartbeat_s,
+            "control_plane_mode": control_plane_mode,
             "market_poll_interval_s": market_poll_s,
             "worker_check_interval_s": worker_check_s,
             "injury_poll_max_age_minutes": injury_poll_max_age_minutes,
@@ -1092,6 +1189,51 @@ def add_lock_check(checks: dict[str, dict[str, Any]], run_id: str, *, owns_lock:
         }
         return
     checks["lock"] = {"status": "ok", "message": "daemon lock matches this process", "path": str(LOCK_PATH)}
+
+
+def add_control_plane_check(
+    checks: dict[str, dict[str, Any]],
+    state: dict[str, Any],
+    *,
+    control_plane_mode: str,
+) -> None:
+    last = state.get("last_control_plane_heartbeat") or {}
+    if control_plane_mode == "local-only":
+        checks["control_plane"] = {
+            "status": "ok",
+            "message": "remote control plane disabled by local-only mode",
+            "mode": control_plane_mode,
+        }
+        return
+    if not last:
+        checks["control_plane"] = {
+            "status": "warn",
+            "message": "remote control plane has not been acknowledged yet",
+            "mode": control_plane_mode,
+        }
+        return
+    if not last.get("read_ok"):
+        checks["control_plane"] = {
+            "status": "fail" if control_plane_mode == "supabase-live" else "warn",
+            "message": "remote control plane read failed",
+            "mode": control_plane_mode,
+            "last_control_plane_heartbeat": last,
+        }
+        return
+    if not last.get("success"):
+        checks["control_plane"] = {
+            "status": "fail" if control_plane_mode == "supabase-live" else "warn",
+            "message": "remote control plane heartbeat publish failed",
+            "mode": control_plane_mode,
+            "last_control_plane_heartbeat": last,
+        }
+        return
+    checks["control_plane"] = {
+        "status": "ok",
+        "message": "remote control plane acknowledged by daemon",
+        "mode": control_plane_mode,
+        "last_control_plane_heartbeat": last,
+    }
 
 
 def parse_iso_datetime(value: Any) -> datetime | None:

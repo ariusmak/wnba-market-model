@@ -25,6 +25,9 @@ all modes.
 Remote per-game passive cancellation is represented by
 `market_controls.cancel_passive_orders`; it disables/cancels passive resting
 orders for that game while leaving IOC eligibility to the other locked gates.
+The live daemon publishes a Supabase `bot_heartbeat` acknowledgment in remote
+control-plane modes, so the dashboard can confirm global commands during quiet
+periods before route workers are launched.
 
 Live feature rows are mutable until the T-8 no-new-entry boundary. The daemon's
 hourly injury refresh rewrites `data/live_features/<game_id>.csv` for mapped
