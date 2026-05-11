@@ -893,95 +893,83 @@ def global_controls(connected: bool) -> None:
         )
 
 
-def market_action_buttons(row: dict[str, Any], connected: bool) -> None:
+def market_control_for_game(controls: list[dict[str, Any]], game_id: str) -> dict[str, Any]:
+    for control in controls:
+        if str(control.get("game_id") or "") == str(game_id):
+            return control
+    return {}
+
+
+def remote_market_restricted(control: dict[str, Any]) -> bool:
+    status = str(control.get("market_status") or "normal").strip().lower()
+    return bool(
+        status not in {"", "normal"}
+        or control.get("pause_active")
+        or control.get("cancel_entry")
+        or control.get("block_new_entries")
+        or control.get("cancel_passive_orders")
+        or control.get("force_conservative")
+    )
+
+
+def remote_market_status_label(control: dict[str, Any]) -> str:
+    if not control:
+        return "NORMAL"
+    status = str(control.get("market_status") or "normal").strip().lower()
+    if remote_market_restricted(control):
+        return status.upper() if status and status != "normal" else "HELD"
+    return "NORMAL"
+
+
+def market_action_buttons(row: dict[str, Any], connected: bool, controls: list[dict[str, Any]]) -> None:
     game_id = row["game_id"]
     reason = st.session_state.get("market_reason", "Manual dashboard command")
     overrides_unlocked = bool(st.session_state.get("confirm_market_overrides"))
-    row_one = st.columns(2)
-    if row_one[0].button("Open Detail", key=f"detail_{game_id}", use_container_width=True):
+    remote_control = market_control_for_game(controls, game_id)
+    remote_restricted = remote_market_restricted(remote_control)
+    remote_label = "Unpause Market" if remote_restricted else "Pause Market"
+    remote_command = "CLEAR_MARKET_CONTROLS" if remote_restricted else "PAUSE_MARKET"
+    decision = resolve_operator_decision(game_id)
+    override = load_game_override(game_id)
+    local_aborted = override.get("decision") == "abort"
+    local_label = "Clear Abort" if local_aborted else "Abort Game"
+
+    action_cols = st.columns(3)
+    if action_cols[0].button("Open Detail", key=f"detail_{game_id}", use_container_width=True):
         st.session_state["selected_game_id"] = game_id
         st.session_state["page"] = "Live Market Detail"
         st.rerun()
-    if row_one[1].button("Pause Market", key=f"pause_{game_id}", use_container_width=True, disabled=not overrides_unlocked):
-        run_command(
-            "Pause Market",
-            lambda gid=game_id: db.apply_market_command(gid, "PAUSE_MARKET", reason),
-            connected,
-        )
-
-    row_two = st.columns(2)
-    if row_two[0].button("Cancel Entry", key=f"cancel_{game_id}", use_container_width=True, disabled=not overrides_unlocked):
-        run_command(
-            "Cancel Entry",
-            lambda gid=game_id: db.apply_market_command(gid, "CANCEL_ENTRY", reason),
-            connected,
-        )
-    if row_two[1].button("Block Game", key=f"block_{game_id}", use_container_width=True, disabled=not overrides_unlocked):
-        run_command(
-            "Block Game",
-            lambda gid=game_id: db.apply_market_command(gid, "BLOCK_GAME", reason),
-            connected,
-        )
-    row_remote = st.columns(2)
-    if row_remote[0].button(
-        "Cancel Passives",
-        key=f"cancel_passives_{game_id}",
+    if action_cols[1].button(
+        remote_label,
+        key=f"remote_toggle_{game_id}",
         use_container_width=True,
         disabled=not overrides_unlocked,
     ):
         run_command(
-            "Cancel Passives",
-            lambda gid=game_id: db.apply_market_command(gid, "CANCEL_MARKET_PASSIVES", reason),
+            remote_label,
+            lambda gid=game_id, command=remote_command: db.apply_market_command(gid, command, reason),
             connected,
         )
-    if row_remote[1].button(
-        "Clear Remote",
-        key=f"clear_remote_{game_id}",
+    if action_cols[2].button(
+        local_label,
+        key=f"local_abort_toggle_{game_id}",
         use_container_width=True,
         disabled=not overrides_unlocked,
     ):
-        run_command(
-            "Clear Remote",
-            lambda gid=game_id: db.apply_market_command(gid, "CLEAR_MARKET_CONTROLS", reason),
-            connected,
+        run_local_command(
+            local_label,
+            lambda gid=game_id, r=reason, decision_value="default" if local_aborted else "abort": save_game_override(
+                game_id=gid,
+                decision=decision_value,
+                reason=r,
+                updated_by="streamlit_webapp",
+            ),
         )
-    decision = resolve_operator_decision(game_id)
-    override = load_game_override(game_id)
     st.caption(
-        f"Execution override: {decision.game_decision.upper()} | "
+        f"Remote: {remote_market_status_label(remote_control)} | "
+        f"Local: {decision.game_decision.upper()} | "
         f"allowed={decision.trade_allowed} | risk={decision.risk_mode.upper()}"
     )
-    row_three = st.columns(2)
-    if row_three[0].button(
-        "Abort Game",
-        key=f"local_abort_{game_id}",
-        use_container_width=True,
-        disabled=not overrides_unlocked,
-    ):
-        run_local_command(
-            "Abort Game",
-            lambda gid=game_id, r=reason: save_game_override(
-                game_id=gid,
-                decision="abort",
-                reason=r,
-                updated_by="streamlit_webapp",
-            ),
-        )
-    if row_three[1].button(
-        "Clear Abort",
-        key=f"local_clear_abort_{game_id}",
-        use_container_width=True,
-        disabled=not overrides_unlocked or override.get("decision") != "abort",
-    ):
-        run_local_command(
-            "Clear Abort",
-            lambda gid=game_id, r=reason: save_game_override(
-                game_id=gid,
-                decision="default",
-                reason=r,
-                updated_by="streamlit_webapp",
-            ),
-        )
 
 
 def render_market_meta(row: dict[str, Any]) -> None:
@@ -995,7 +983,7 @@ def render_market_meta(row: dict[str, Any]) -> None:
     )
 
 
-def market_card(row: dict[str, Any], connected: bool) -> None:
+def market_card(row: dict[str, Any], connected: bool, controls: list[dict[str, Any]]) -> None:
     with st.container(border=True):
         render_market_header(row)
         render_stat_grid(
@@ -1020,7 +1008,7 @@ def market_card(row: dict[str, Any], connected: bool) -> None:
             ]
         )
         render_market_meta(row)
-        market_action_buttons(row, connected)
+        market_action_buttons(row, connected, controls)
 
 
 def recent_command_strip(commands: list[dict[str, Any]]) -> None:
@@ -1041,7 +1029,7 @@ def recent_command_strip(commands: list[dict[str, Any]]) -> None:
         )
 
 
-def filtered_markets(markets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def filtered_markets(markets: list[dict[str, Any]], controls: list[dict[str, Any]]) -> list[dict[str, Any]]:
     st.subheader("Live Markets")
     query = st.text_input("Search markets", value="", key="market_search")
     view = st.selectbox(
@@ -1052,6 +1040,7 @@ def filtered_markets(markets: list[dict[str, Any]]) -> list[dict[str, Any]]:
     query_lower = query.strip().lower()
     out = []
     for row in markets:
+        remote_control = market_control_for_game(controls, str(row.get("game_id") or ""))
         haystack = " ".join(
             str(row.get(key) or "")
             for key in ["game_id", "home_team", "away_team", "selected_team", "opponent_team", "phase", "trading_status"]
@@ -1068,7 +1057,7 @@ def filtered_markets(markets: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         if view == "Paused/blocked/cancelled" and not any(
             token in f"{status} {phase}" for token in ["pause", "block", "cancel", "kill", "gate"]
-        ):
+        ) and not remote_market_restricted(remote_control):
             continue
         if view == "Stale" and all(
             age_tone(age_minutes(row.get(field)), 3, 10) != "bad"
@@ -1091,11 +1080,11 @@ def control_room(state: dict[str, Any], connected: bool) -> None:
     recent_command_strip(state["commands"])
     st.text_input("Market command reason", value="Manual market dashboard command", key="market_reason")
     st.checkbox("Unlock market override buttons", key="confirm_market_overrides")
-    markets = filtered_markets(state["markets"])
+    markets = filtered_markets(state["markets"], state["controls"])
     if not markets:
         st.info("No live market snapshots yet.")
     for row in markets:
-        market_card(row, connected)
+        market_card(row, connected, state["controls"])
 
 
 def selected_game(markets: list[dict[str, Any]]) -> str | None:
@@ -1198,42 +1187,32 @@ def live_market_detail(state: dict[str, Any], connected: bool) -> None:
     st.subheader("Market Controls")
     reason = st.text_input("Detail command reason", value="Manual detail dashboard command")
     unlock_detail = st.checkbox("Unlock detail market controls", key=f"unlock_detail_{game_id}")
-    cols = st.columns(4)
-    if cols[0].button("Pause Market", use_container_width=True, disabled=not unlock_detail):
-        run_command("Pause Market", lambda: db.apply_market_command(game_id, "PAUSE_MARKET", reason), connected)
-    if cols[1].button("Unpause Market", use_container_width=True, disabled=not unlock_detail):
-        run_command("Unpause Market", lambda: db.apply_market_command(game_id, "UNPAUSE_MARKET", reason), connected)
-    if cols[2].button("Cancel Entry", use_container_width=True, disabled=not unlock_detail):
-        run_command("Cancel Entry", lambda: db.apply_market_command(game_id, "CANCEL_ENTRY", reason), connected)
-    if cols[3].button("Force Conservative", use_container_width=True, disabled=not unlock_detail):
-        run_command("Force Conservative", lambda: db.apply_market_command(game_id, "FORCE_CONSERVATIVE_MARKET", reason), connected)
-    remote_cols = st.columns(2)
-    if remote_cols[0].button("Cancel Passives", use_container_width=True, disabled=not unlock_detail):
-        run_command("Cancel Passives", lambda: db.apply_market_command(game_id, "CANCEL_MARKET_PASSIVES", reason), connected)
-    if remote_cols[1].button("Clear Remote Controls", use_container_width=True, disabled=not unlock_detail):
-        run_command("Clear Remote Controls", lambda: db.apply_market_command(game_id, "CLEAR_MARKET_CONTROLS", reason), connected)
+    remote_control = market_control_for_game(state["controls"], game_id)
+    remote_restricted = remote_market_restricted(remote_control)
+    remote_label = "Unpause Market" if remote_restricted else "Pause Market"
+    remote_command = "CLEAR_MARKET_CONTROLS" if remote_restricted else "PAUSE_MARKET"
     decision = resolve_operator_decision(game_id)
+    override = load_game_override(game_id)
+    local_aborted = override.get("decision") == "abort"
+    local_label = "Clear Abort" if local_aborted else "Abort Game"
     st.caption(
-        f"Local execution override: {decision.game_decision.upper()} | "
+        f"Remote: {remote_market_status_label(remote_control)} | "
+        f"Local: {decision.game_decision.upper()} | "
         f"allowed={decision.trade_allowed} | reason={decision.reason} | risk={decision.risk_mode.upper()}"
     )
-    local_cols = st.columns(2)
-    if local_cols[0].button("Abort Game Locally", use_container_width=True, disabled=not unlock_detail):
-        run_local_command(
-            "Abort Game",
-            lambda gid=game_id, r=reason: save_game_override(
-                game_id=gid,
-                decision="abort",
-                reason=r,
-                updated_by="streamlit_webapp",
-            ),
+    control_cols = st.columns(2)
+    if control_cols[0].button(remote_label, use_container_width=True, disabled=not unlock_detail):
+        run_command(
+            remote_label,
+            lambda gid=game_id, command=remote_command: db.apply_market_command(gid, command, reason),
+            connected,
         )
-    if local_cols[1].button("Clear Local Abort", use_container_width=True, disabled=not unlock_detail):
+    if control_cols[1].button(local_label, use_container_width=True, disabled=not unlock_detail):
         run_local_command(
-            "Clear Abort",
-            lambda gid=game_id, r=reason: save_game_override(
+            local_label,
+            lambda gid=game_id, r=reason, decision_value="default" if local_aborted else "abort": save_game_override(
                 game_id=gid,
-                decision="default",
+                decision=decision_value,
                 reason=r,
                 updated_by="streamlit_webapp",
             ),
