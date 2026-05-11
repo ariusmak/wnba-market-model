@@ -41,6 +41,11 @@ from srwnba.live.canonical.kalshi_mapping import (  # noqa: E402
 )
 from srwnba.live.canonical.operator_control import resolve_operator_decision  # noqa: E402
 from srwnba.live.canonical.process_lock import read_game_lock_status  # noqa: E402
+from srwnba.live.control_plane import (  # noqa: E402
+    CONTROL_PLANE_MODES,
+    ControlPlaneBridge,
+    merge_control_decision,
+)
 
 RUN_ROOT = REPO_ROOT / "data" / "runs" / "live_execution"
 STATE_PATH = RUN_ROOT / "execution_state.json"
@@ -65,6 +70,8 @@ def main() -> None:
                     help="Evaluate launch decisions but do not spawn processes.")
     ap.add_argument("--poll-interval-s", type=float, default=0.0)
     ap.add_argument("--operator-control-path", default=None)
+    ap.add_argument("--control-plane-mode", choices=CONTROL_PLANE_MODES, default="local-only")
+    ap.add_argument("--control-plane-bot-id", default="wnba-execution-supervisor")
     ap.add_argument("--team-name-map",
                     default=str(REPO_ROOT / "data" / "config" / "kalshi_team_name_map.csv"))
     ap.add_argument("--market-discovery-limit", type=int, default=100)
@@ -79,6 +86,7 @@ def main() -> None:
         "year": args.year,
         "plan_only": args.plan_only,
         "route_dry_run": args.route_dry_run,
+        "control_plane_mode": args.control_plane_mode,
         "market_snapshot_json": args.market_snapshot_json,
         "live_feature_dir": args.live_feature_dir,
         "considered": 0,
@@ -94,6 +102,7 @@ def main() -> None:
     team_name_to_id = load_team_name_map(args.team_name_map)
     schedule = load_latest_schedule(args.year)
     live_feature_dir = Path(args.live_feature_dir)
+    control_plane = ControlPlaneBridge(mode=args.control_plane_mode, bot_id=args.control_plane_bot_id)
 
     for raw in sorted(schedule.values(), key=lambda item: (str(item.get("scheduled") or ""), str(item.get("id") or ""))):
         game = game_ref_from_schedule(raw)
@@ -146,12 +155,21 @@ def main() -> None:
             game.game_id,
             global_control_path=Path(args.operator_control_path) if args.operator_control_path else None,
         )
-        if not decision.trade_allowed:
+        remote_snapshot = control_plane.read_controls(game.game_id)
+        effective_decision = merge_control_decision(
+            game_id=game.game_id,
+            mode=args.control_plane_mode,
+            local_decision=decision,
+            remote_snapshot=remote_snapshot,
+            publish_failure_count=control_plane.consecutive_publish_failures,
+        )
+        if not effective_decision.trade_allowed:
             summary["skipped"].append({
                 "game_id": game.game_id,
-                "reason": decision.reason,
+                "reason": effective_decision.reason,
                 "lead_hours": lead_hours,
                 **decision.to_log_payload(),
+                **effective_decision.to_log_payload(),
             })
             continue
 
@@ -228,6 +246,8 @@ def route_loop_cmd(*, game: SportRadarGameRef, feature_csv: Path, args: argparse
         "--poll-interval-s", str(args.poll_interval_s),
         "--team-name-map", str(args.team_name_map),
         "--market-discovery-limit", str(args.market_discovery_limit),
+        "--control-plane-mode", str(args.control_plane_mode),
+        "--control-plane-bot-id", str(args.control_plane_bot_id),
     ]
     for series in args.series_ticker or ["KXWNBAGAME", "KXWNBAH"]:
         cmd.extend(["--series-ticker", str(series)])

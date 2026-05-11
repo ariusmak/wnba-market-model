@@ -16,6 +16,7 @@ LEDGER_SCHEMA_VERSION = "live_game_ledger_v1"
 
 ORDER_EVENTS = {
     "dry_order",
+    "order_skipped",
     "order_submitted",
     "order_error",
     "passive_reserved",

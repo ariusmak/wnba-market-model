@@ -135,6 +135,14 @@ The local worker should use Supabase as the bridge. Before every order attempt:
 
 Cancellation is special: kill should block new orders, but must still allow cancelling passives.
 
+Execution supports three explicit control-plane modes:
+
+- `local-only` - use only local JSON controls. This is the compatibility/default mode for local diagnostics.
+- `supabase-shadow` - read Supabase controls and publish worker/table state, but log intended orders as skipped shadow events instead of sending them to Kalshi.
+- `supabase-live` - read Supabase controls before planning and again before every live order attempt. Missing/unreadable Supabase controls fail closed for new orders.
+
+Local JSON controls remain an emergency brake in every mode. The effective worker decision is the most restrictive combination of local JSON plus Supabase global and per-game controls. Supabase can lower max market exposure, disable IOC/passive/burst orders, force conservative mode, or block entries, but it cannot loosen the locked v1.2 caps or override a local kill/abort.
+
 The worker should continuously publish:
 
 - `bot_heartbeat`

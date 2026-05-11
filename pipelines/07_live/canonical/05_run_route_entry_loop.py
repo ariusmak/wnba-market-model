@@ -34,6 +34,7 @@ from srwnba.live.canonical.kalshi_mapping import SportRadarGameRef, parse_dateti
 from srwnba.live.canonical.portfolio import resolve_portfolio_sizing  # noqa: E402
 from srwnba.live.canonical.process_lock import GameProcessLock  # noqa: E402
 from srwnba.live.canonical.route_entry_loop import RouteEntryContext, RouteEntryLoop  # noqa: E402
+from srwnba.live.control_plane import CONTROL_PLANE_MODES  # noqa: E402
 from srwnba.util.final_model import FinalModel  # noqa: E402
 from utils.kalshi_authed_client import AuthedKalshiClient  # noqa: E402
 
@@ -110,6 +111,10 @@ def main() -> None:
     ap.add_argument("--operator-override-path", default=None,
                     help=("Per-game override JSON path. Defaults to "
                           "data/runs/live_control/game_overrides/<game-id>.json."))
+    ap.add_argument("--control-plane-mode", choices=CONTROL_PLANE_MODES, default="local-only",
+                    help="Remote control-plane enforcement mode.")
+    ap.add_argument("--control-plane-bot-id", default="wnba-route-worker",
+                    help="bot_heartbeat.bot_id used when publishing worker status.")
     ap.add_argument("--position-reconcile-interval-s", type=float, default=300.0,
                     help="How often to reconcile route fills/positions against Kalshi.")
     ap.add_argument("--skip-startup-reconciliation", action="store_true",
@@ -246,6 +251,8 @@ def main() -> None:
                 "portfolio_refresh_interval_s": args.portfolio_refresh_interval_s,
                 "operator_control_path": args.operator_control_path,
                 "operator_override_path": args.operator_override_path,
+                "control_plane_mode": args.control_plane_mode,
+                "control_plane_bot_id": args.control_plane_bot_id,
                 "position_reconcile_interval_s": args.position_reconcile_interval_s,
                 "startup_reconciliation": not args.skip_startup_reconciliation,
                 "execution_config": asdict(cfg),
@@ -271,6 +278,8 @@ def main() -> None:
         portfolio_refresh_interval_s=args.portfolio_refresh_interval_s,
         operator_global_control_path=Path(args.operator_control_path) if args.operator_control_path else None,
         operator_game_override_path=Path(args.operator_override_path) if args.operator_override_path else None,
+        control_plane_mode=args.control_plane_mode,
+        control_plane_bot_id=args.control_plane_bot_id,
         position_reconcile_interval_s=args.position_reconcile_interval_s,
         startup_reconciliation=not args.skip_startup_reconciliation,
         ledger=ledger,

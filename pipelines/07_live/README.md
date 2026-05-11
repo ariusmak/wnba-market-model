@@ -20,6 +20,14 @@ Canonical route-loop execution reconciles Kalshi fills/positions on startup and 
 
 Local operator controls live under `data/runs/live_control/`. Missing files mean all eligible games trade normally. Global auto-trade off, risk mode `kill`, or a per-game `abort` override blocks execution. The Streamlit webapp exposes this trade-default toggle, risk mode display, and per-game abort/clear controls.
 
+Remote dashboard wiring is controlled explicitly with `--control-plane-mode`:
+
+- `local-only` keeps execution on local JSON controls only.
+- `supabase-shadow` reads Supabase controls and publishes heartbeat/route/order/equity tables, but intended orders are logged as skipped shadow events.
+- `supabase-live` fails closed if Supabase controls cannot be read and rechecks the merged local+Supabase decision before every Kalshi order attempt.
+
+Local JSON controls remain the final emergency brake in every mode; Supabase can only add restrictions or lower caps.
+
 When available cash is binding across multiple otherwise eligible live tickets, cash allocation must use `src/srwnba/live/canonical/cash_priority.py`: exact marginal expected log growth per dollar, with current fills plus reserved open orders included as existing position cost.
 
 Canonical route-loop execution writes a per-game ledger under `data/runs/live_games/<game_id>/` by default. It contains the prediction packet, confirmed market mapping, raw route orderbook snapshots, evaluated route quotes, portfolio sizing snapshots, execution plans, orders, fills, errors, summaries, and per-run session copies. `data/live_logs/<game_id>.route.jsonl` remains the flat event stream.

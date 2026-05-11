@@ -19,12 +19,22 @@ import math
 import time
 import uuid
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import pandas as pd
 
 from ...util.final_model import FinalModel
+from ..control_plane import (
+    CONTROL_PLANE_MODES,
+    ControlPlaneBridge,
+    EffectiveControlDecision,
+    RemoteControlSnapshot,
+    apply_effective_config,
+    merge_control_decision,
+    utc_now_iso,
+)
 from ..common import estimate_kalshi_fee_dollars
 from .execution import (
     ExecutionConfig,
@@ -127,6 +137,9 @@ class RouteEntryLoop:
         portfolio_refresh_interval_s: float = 300.0,
         operator_global_control_path: Optional[Path] = None,
         operator_game_override_path: Optional[Path] = None,
+        control_plane_mode: str = "local-only",
+        control_plane_bot_id: str = "wnba-route-worker",
+        control_plane_bridge: Optional[ControlPlaneBridge] = None,
         position_reconcile_interval_s: float = 300.0,
         startup_reconciliation: bool = True,
     ) -> None:
@@ -147,10 +160,30 @@ class RouteEntryLoop:
         self.last_portfolio_refresh_s: Optional[float] = None
         self.operator_global_control_path = operator_global_control_path
         self.operator_game_override_path = operator_game_override_path
+        if control_plane_mode not in CONTROL_PLANE_MODES:
+            raise ValueError(f"control_plane_mode must be one of {CONTROL_PLANE_MODES}, got {control_plane_mode!r}")
+        self.control_plane = control_plane_bridge or ControlPlaneBridge(
+            mode=control_plane_mode,
+            bot_id=control_plane_bot_id,
+        )
         self.operator_decision: OperatorDecision = resolve_operator_decision(
             self.ctx.game.game_id,
             global_control_path=self.operator_global_control_path,
             game_override_path_=self.operator_game_override_path,
+        )
+        self.remote_control_snapshot = RemoteControlSnapshot(
+            mode=self.control_plane.mode,
+            read_ok=True,
+            configured=self.control_plane.configured,
+            database_connected=False,
+            read_at_utc=utc_now_iso(),
+        )
+        self.control_decision: EffectiveControlDecision = merge_control_decision(
+            game_id=self.ctx.game.game_id,
+            mode=self.control_plane.mode,
+            local_decision=self.operator_decision,
+            remote_snapshot=self.remote_control_snapshot,
+            publish_failure_count=self.control_plane.consecutive_publish_failures,
         )
         self.position_reconcile_interval_s = max(0.0, float(position_reconcile_interval_s))
         self.startup_reconciliation = bool(startup_reconciliation)
@@ -224,6 +257,7 @@ class RouteEntryLoop:
 
     def run(self, wall_clock_now_s=None) -> None:
         now_fn = wall_clock_now_s or (lambda: time.time())
+        self._refresh_operator_decision(emit=False)
         self._write_event({
             "evt": "route_loop_start",
             "game_id": self.ctx.game.game_id,
@@ -241,6 +275,7 @@ class RouteEntryLoop:
             "model_best_round": getattr(self.predictor, "best_round", None),
             "model_best_round_source": getattr(self.predictor, "best_round_source", None),
             **self.operator_decision.to_log_payload(),
+            **self.control_decision.to_log_payload(),
             "portfolio_sizing": (
                 self.portfolio_sizing.to_log_payload() if self.portfolio_sizing else None
             ),
@@ -290,6 +325,7 @@ class RouteEntryLoop:
         self._refresh_portfolio_sizing(now_s=now)
         self._refresh_operator_decision()
         self._reconcile_exchange_position(now_s=now, source="runtime", seed=False)
+        effective_cfg = self._effective_cfg()
         quotes: List[RouteQuote] = []
         for route in self.routes:
             payload = self.client.get_orderbook(route.market_ticker)
@@ -298,7 +334,7 @@ class RouteEntryLoop:
                 route,
                 payload,
                 p_selected=self.p_selected,
-                cfg=self.cfg,
+                cfg=effective_cfg,
             )
             quotes.append(quote)
             self._write_route_quote(quote)
@@ -311,11 +347,15 @@ class RouteEntryLoop:
         )
         self._write_signal_state(now, quotes)
         self._refresh_active_passive(now)
-        self._expire_or_cancel_passive_if_needed(now, quotes)
+        if self.active_passive is not None and (
+            not self.control_decision.trade_allowed or not self.control_decision.allow_passive_orders
+        ):
+            self._cancel_active_passive("control_plane_or_operator_block", now_s=now)
+        self._expire_or_cancel_passive_if_needed(now, quotes, cfg=effective_cfg)
 
-        if not self.operator_decision.trade_allowed:
+        if not self.control_decision.trade_allowed:
             clear_cash_candidate(game_id=self.ctx.game.game_id, coordinator_dir=CASH_COORDINATOR_DIR)
-            self._write_blocked_plan(quotes, self.operator_decision.reason)
+            self._write_blocked_plan(quotes, self.control_decision.reason)
             return
         if self.execution_block_reason:
             clear_cash_candidate(game_id=self.ctx.game.game_id, coordinator_dir=CASH_COORDINATOR_DIR)
@@ -347,14 +387,14 @@ class RouteEntryLoop:
                 order_reject_timestamps_s=tuple(self.order_reject_timestamps_s),
                 api_error_timestamps_s=tuple(self.api_error_timestamps_s),
                 position_mismatch_dollars=self.position_mismatch_dollars,
-                conservative_mode=self.operator_decision.risk_mode == "conservative",
+                conservative_mode=self.control_decision.risk_mode == "conservative",
             ),
         )
         plan = plan_v1_2_orders(
             selected_team_id=self.selected_team_id,
             p_selected=self.p_selected,
             route_quotes=quotes,
-            cfg=self.cfg,
+            cfg=effective_cfg,
             runtime=runtime,
         )
         if plan.orders and not self.dry_run:
@@ -396,6 +436,28 @@ class RouteEntryLoop:
             return self.cfg.bankroll
         return max(0.0, self.available_cash_dollars - self.cfg.cash_buffer_pct * self.cfg.bankroll)
 
+    def _effective_cfg(self) -> ExecutionConfig:
+        return apply_effective_config(self.cfg, self.control_decision)
+
+    def _control_plane_context(self) -> dict[str, Any]:
+        lead_hours = (float(self.ctx.tipoff_ts_s) - time.time()) / 3600.0
+        return {
+            "game_id": self.ctx.game.game_id,
+            "home_team_name": self.ctx.game.home_team_name,
+            "away_team_name": self.ctx.game.away_team_name,
+            "home_team_id": self.ctx.game.home_team_id,
+            "away_team_id": self.ctx.game.away_team_id,
+            "selected_team_id": self.selected_team_id,
+            "selected_team_name": self.state.selected_team_name,
+            "opponent_team_id": self.state.opponent_team_id,
+            "opponent_team_name": self.state.opponent_team_name,
+            "tipoff_ts_utc": datetime.fromtimestamp(float(self.ctx.tipoff_ts_s), tz=timezone.utc).isoformat(),
+            "lead_hours": lead_hours,
+            "bankroll": self.cfg.bankroll,
+            "available_cash_dollars": self.available_cash_dollars,
+            "available_cash_after_buffer_dollars": self._available_cash_after_buffer(),
+        }
+
     def _execute(self, order: PlannedChildOrder, *, now_s: Optional[float] = None) -> None:
         now = float(now_s if now_s is not None else time.time())
         client_order_id = (
@@ -426,6 +488,29 @@ class RouteEntryLoop:
                     order_id="dry-passive",
                     now_s=now,
                 )
+            return
+
+        self._refresh_operator_decision()
+        block_reason = self.control_decision.block_reason_for_order(order)
+        if block_reason:
+            self._write_event({
+                "evt": "order_skipped",
+                "order_mode": "shadow" if self.control_decision.shadow_mode_enabled else order.order_mode,
+                "skip_reason": block_reason,
+                "client_order_id": client_order_id,
+                "route_id": order.route_id,
+                "market_ticker": order.market_ticker,
+                "route_type": order.route_type,
+                "action": order.action,
+                "side": order.side,
+                "count": order.count,
+                "limit_price_cents": order.limit_price_cents,
+                "max_cost_dollars": order.max_cost_dollars,
+                "q_max_cents": order.q_max_cents,
+                "time_in_force": order.time_in_force,
+                "post_only": order.post_only,
+                **self.control_decision.to_log_payload(),
+            })
             return
 
         try:
@@ -664,9 +749,10 @@ class RouteEntryLoop:
             "evt": "execution_plan",
             "selected_team_id": plan.selected_team_id,
             "p_selected": plan.p_selected,
-            "operator_trade_allowed": self.operator_decision.trade_allowed,
-            "operator_reason": self.operator_decision.reason,
-            "operator_risk_mode": self.operator_decision.risk_mode,
+            "operator_trade_allowed": self.control_decision.trade_allowed,
+            "operator_reason": self.control_decision.reason,
+            "operator_risk_mode": self.control_decision.risk_mode,
+            **self.control_decision.to_log_payload(),
             "position_mismatch_dollars": self.position_mismatch_dollars,
             "target_position_dollars": plan.target_position_dollars,
             "filled_position_dollars": self.state.filled_cost_dollars,
@@ -716,9 +802,10 @@ class RouteEntryLoop:
             "evt": "execution_plan",
             "selected_team_id": self.selected_team_id,
             "p_selected": self.p_selected,
-            "operator_trade_allowed": self.operator_decision.trade_allowed,
-            "operator_reason": self.operator_decision.reason,
-            "operator_risk_mode": self.operator_decision.risk_mode,
+            "operator_trade_allowed": self.control_decision.trade_allowed,
+            "operator_reason": self.control_decision.reason,
+            "operator_risk_mode": self.control_decision.risk_mode,
+            **self.control_decision.to_log_payload(),
             "position_mismatch_dollars": self.position_mismatch_dollars,
             "target_position_dollars": 0.0,
             "filled_position_dollars": self.state.filled_cost_dollars,
@@ -801,25 +888,32 @@ class RouteEntryLoop:
             return
         self._apply_passive_order_snapshot(resp, source="passive_status")
 
-    def _expire_or_cancel_passive_if_needed(self, now_s: float, quotes: Sequence[RouteQuote]) -> None:
+    def _expire_or_cancel_passive_if_needed(
+        self,
+        now_s: float,
+        quotes: Sequence[RouteQuote],
+        *,
+        cfg: Optional[ExecutionConfig] = None,
+    ) -> None:
         if self.active_passive is None:
             return
-        timing = timing_state(now_s, float(self.ctx.tipoff_ts_s), self.cfg)
+        cfg = cfg or self.cfg
+        timing = timing_state(now_s, float(self.ctx.tipoff_ts_s), cfg)
         by_route = {quote.route.route_id: quote for quote in quotes}
         quote = by_route.get(self.active_passive.route_id)
-        if timing.lead_hours <= self.cfg.no_new_entry_hours_before_tip:
+        if timing.lead_hours <= cfg.no_new_entry_hours_before_tip:
             self._cancel_active_passive("cancel_passive_at_T8", now_s=now_s)
             self.passive_reprices_current_episode = 0
-        elif now_s - self.active_passive.created_ts_s >= _passive_timeout_s(timing, self.cfg):
+        elif now_s - self.active_passive.created_ts_s >= _passive_timeout_s(timing, cfg):
             self._cancel_active_passive("cancel_passive_timeout", now_s=now_s)
             self.passive_reprices_current_episode = 0
         elif quote and quote.q_max_cents < self.active_passive.limit_price_cents:
             self._cancel_active_passive("cancel_passive_above_qmax", now_s=now_s)
             self.passive_reprices_current_episode = 0
         elif quote:
-            desired_price = _passive_reprice_tick(quote, self.cfg)
+            desired_price = _passive_reprice_tick(quote, cfg)
             if desired_price and desired_price > self.active_passive.limit_price_cents:
-                if self.active_passive.reprices < self.cfg.max_upward_reprices_per_passive_episode:
+                if self.active_passive.reprices < cfg.max_upward_reprices_per_passive_episode:
                     self.passive_reprices_current_episode = self.active_passive.reprices + 1
                     self._cancel_active_passive(
                         "cancel_passive_for_upward_reprice",
@@ -1007,9 +1101,10 @@ class RouteEntryLoop:
             "evt": "execution_plan",
             "selected_team_id": self.selected_team_id,
             "p_selected": self.p_selected,
-            "operator_trade_allowed": self.operator_decision.trade_allowed,
-            "operator_reason": self.operator_decision.reason,
-            "operator_risk_mode": self.operator_decision.risk_mode,
+            "operator_trade_allowed": self.control_decision.trade_allowed,
+            "operator_reason": self.control_decision.reason,
+            "operator_risk_mode": self.control_decision.risk_mode,
+            **self.control_decision.to_log_payload(),
             "position_mismatch_dollars": self.position_mismatch_dollars,
             "target_position_dollars": 0.0,
             "filled_position_dollars": self.state.filled_cost_dollars,
@@ -1056,15 +1151,45 @@ class RouteEntryLoop:
         all_in_cost = raw_cost + fee_dollars
         return max(0.0001, min(0.9999, all_in_cost / total_contracts))
 
-    def _refresh_operator_decision(self) -> None:
-        previous = self.operator_decision
+    def _refresh_operator_decision(self, *, emit: bool = True) -> None:
+        previous_operator = self.operator_decision
+        previous_effective = self.control_decision
         self.operator_decision = resolve_operator_decision(
             self.ctx.game.game_id,
             global_control_path=self.operator_global_control_path,
             game_override_path_=self.operator_game_override_path,
         )
-        if self.operator_decision != previous:
-            payload = self.operator_decision.to_log_payload()
+        self.remote_control_snapshot = self.control_plane.read_controls(self.ctx.game.game_id)
+        self.control_decision = merge_control_decision(
+            game_id=self.ctx.game.game_id,
+            mode=self.control_plane.mode,
+            local_decision=self.operator_decision,
+            remote_snapshot=self.remote_control_snapshot,
+            publish_failure_count=self.control_plane.consecutive_publish_failures,
+        )
+        publish_failure_count_before = self.control_plane.consecutive_publish_failures
+        self.control_plane.publish_heartbeat(
+            decision=self.control_decision,
+            status="running" if self.control_decision.trade_allowed else "blocked",
+            kalshi_connected=True,
+            market_data_connected=bool(self.markets),
+            open_orders_count=1 if self.active_passive is not None else 0,
+            open_positions_count=sum(1 for count in self.state.filled_contracts_by_route.values() if count),
+            last_error=self.remote_control_snapshot.error,
+        )
+        if self.control_plane.consecutive_publish_failures != publish_failure_count_before:
+            self.control_decision = merge_control_decision(
+                game_id=self.ctx.game.game_id,
+                mode=self.control_plane.mode,
+                local_decision=self.operator_decision,
+                remote_snapshot=self.remote_control_snapshot,
+                publish_failure_count=self.control_plane.consecutive_publish_failures,
+            )
+        if emit and (self.operator_decision != previous_operator or self.control_decision != previous_effective):
+            payload = {
+                **self.operator_decision.to_log_payload(),
+                **self.control_decision.to_log_payload(),
+            }
             payload["evt"] = "operator_control_refresh"
             self._write_event(payload)
 
@@ -1165,6 +1290,7 @@ class RouteEntryLoop:
         if self.log_path:
             with self.log_path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(payload, default=str) + "\n")
+        self.control_plane.publish_event(payload, self._control_plane_context())
         if payload.get("evt") in {
             "route_loop_start",
             "operator_control_refresh",
@@ -1178,6 +1304,7 @@ class RouteEntryLoop:
             "signal_state",
             "execution_plan",
             "dry_order",
+            "order_skipped",
             "passive_reserved",
             "passive_cancelled",
             "passive_cancel_error",

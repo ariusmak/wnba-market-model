@@ -24,6 +24,7 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from srwnba.live.canonical.execution import (  # noqa: E402
     ExecutionConfig,
+    PlannedChildOrder,
     evaluate_route_quote,
     no_asks_from_yes_bids,
     order_kwargs_from_plan,
@@ -55,9 +56,11 @@ from srwnba.live.canonical.kalshi_mapping import (  # noqa: E402
     map_game_to_kalshi_markets,
     parse_event_date,
 )
+from srwnba.live.canonical.operator_control import OperatorDecision  # noqa: E402
 from srwnba.live.canonical.route_entry_loop import RouteEntryContext, RouteEntryLoop  # noqa: E402
 from srwnba.live.canonical.portfolio import resolve_portfolio_sizing  # noqa: E402
 from srwnba.live.canonical.process_lock import GameProcessLock, read_game_lock_status  # noqa: E402
+from srwnba.live.control_plane import RemoteControlSnapshot, merge_control_decision  # noqa: E402
 from srwnba.live.canonical.v1_2 import (  # noqa: E402
     BrakeState,
     PlannerRuntimeState,
@@ -779,6 +782,126 @@ def test_route_loop_blocks_expansion_team_under_gate() -> None:
     print("  route loop expansion gate block OK")
 
 
+def test_control_plane_merge_blocks_and_shadows() -> None:
+    local = OperatorDecision(
+        game_id="control-plane-unit",
+        trade_allowed=True,
+        reason="operator_allowed",
+        auto_trade_enabled=True,
+        risk_mode="normal",
+        game_decision="default",
+        global_control_path="local-control.json",
+        game_override_path="local-override.json",
+    )
+    blocked_remote = RemoteControlSnapshot(
+        mode="supabase-live",
+        read_ok=True,
+        configured=True,
+        database_connected=True,
+        read_at_utc="2026-05-11T00:00:00+00:00",
+        control_state={
+            "trading_enabled": True,
+            "kill_switch_active": False,
+            "allow_new_entries": True,
+            "allow_ioc_orders": True,
+            "allow_passive_orders": True,
+            "allow_burst_mode": True,
+            "mode": "normal",
+        },
+        market_control={
+            "market_status": "blocked",
+            "block_new_entries": True,
+        },
+    )
+    decision = merge_control_decision(
+        game_id="control-plane-unit",
+        mode="supabase-live",
+        local_decision=local,
+        remote_snapshot=blocked_remote,
+    )
+    assert decision.trade_allowed is False
+    assert decision.reason == "control_plane_market_blocked"
+
+    read_failed = merge_control_decision(
+        game_id="control-plane-unit",
+        mode="supabase-live",
+        local_decision=local,
+        remote_snapshot=RemoteControlSnapshot(
+            mode="supabase-live",
+            read_ok=False,
+            configured=True,
+            database_connected=False,
+            read_at_utc="2026-05-11T00:00:00+00:00",
+            error="unit read failure",
+        ),
+    )
+    assert read_failed.trade_allowed is False
+    assert read_failed.reason == "control_plane_read_failed"
+
+    publish_failed = merge_control_decision(
+        game_id="control-plane-unit",
+        mode="supabase-live",
+        local_decision=local,
+        remote_snapshot=RemoteControlSnapshot(
+            mode="supabase-live",
+            read_ok=True,
+            configured=True,
+            database_connected=True,
+            read_at_utc="2026-05-11T00:00:00+00:00",
+            control_state={
+                "trading_enabled": True,
+                "kill_switch_active": False,
+                "allow_new_entries": True,
+                "mode": "normal",
+            },
+        ),
+        publish_failure_count=3,
+    )
+    assert publish_failed.trade_allowed is False
+    assert publish_failed.reason == "control_plane_publish_unhealthy"
+
+    shadow_remote = RemoteControlSnapshot(
+        mode="supabase-shadow",
+        read_ok=True,
+        configured=True,
+        database_connected=True,
+        read_at_utc="2026-05-11T00:00:00+00:00",
+        control_state={
+            "trading_enabled": True,
+            "kill_switch_active": False,
+            "allow_new_entries": True,
+            "allow_ioc_orders": True,
+            "allow_passive_orders": True,
+            "allow_burst_mode": True,
+            "shadow_mode_enabled": False,
+            "mode": "normal",
+        },
+        market_control={},
+    )
+    shadow = merge_control_decision(
+        game_id="control-plane-unit",
+        mode="supabase-shadow",
+        local_decision=local,
+        remote_snapshot=shadow_remote,
+    )
+    assert shadow.trade_allowed is True
+    assert shadow.shadow_mode_enabled is True
+    order = PlannedChildOrder(
+        route_id="r1",
+        market_ticker="KXUNIT",
+        route_type="BUY_YES_SELECTED",
+        action="buy",
+        side="yes",
+        count=1,
+        limit_price_cents=40,
+        max_cost_dollars=0.40,
+        expected_all_in_avg_price_cents=40.0,
+        q_max_cents=40,
+    )
+    assert shadow.block_reason_for_order(order) == "control_plane_shadow_mode"
+    print("  control-plane merge/shadow gates OK")
+
+
 def main() -> None:
     print("[mapping/execution] unit tests")
     test_custom_strike_parser()
@@ -801,6 +924,7 @@ def main() -> None:
     test_v1_2_conservative_mode()
     test_v1_2_splits_tied_routes()
     test_route_loop_blocks_expansion_team_under_gate()
+    test_control_plane_merge_blocks_and_shadows()
     print("[mapping/execution] OK")
 
 

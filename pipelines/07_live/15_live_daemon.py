@@ -85,6 +85,12 @@ def main() -> None:
     ap.add_argument("--disable-worker", action="store_true")
     ap.add_argument("--execution-dry-run", action="store_true",
                     help="Launch route loops with --dry-run for read-only execution testing.")
+    ap.add_argument("--control-plane-mode",
+                    choices=("local-only", "supabase-shadow", "supabase-live"),
+                    default="local-only",
+                    help="Remote control-plane mode passed to execution supervisor and route loops.")
+    ap.add_argument("--control-plane-bot-id", default="wnba-live-daemon",
+                    help="bot_heartbeat.bot_id prefix for worker status publishing.")
     ap.add_argument("--disable-execution-supervisor", action="store_true")
     ap.add_argument("--ignore-lock", action="store_true")
     args = ap.parse_args()
@@ -128,6 +134,7 @@ def main() -> None:
         worker_dry_run=args.worker_dry_run,
         disable_worker=args.disable_worker,
         execution_dry_run=args.execution_dry_run,
+        control_plane_mode=args.control_plane_mode,
         disable_execution_supervisor=args.disable_execution_supervisor,
     )
 
@@ -220,6 +227,8 @@ def main() -> None:
                         year=args.year,
                         market_snapshot=latest_market_snapshot,
                         route_dry_run=args.execution_dry_run,
+                        control_plane_mode=args.control_plane_mode,
+                        control_plane_bot_id=args.control_plane_bot_id,
                         session_dir=session_dir,
                         logger=logger,
                     )
@@ -506,6 +515,8 @@ def run_execution_supervisor(
     year: int,
     market_snapshot: Path | None,
     route_dry_run: bool,
+    control_plane_mode: str,
+    control_plane_bot_id: str,
     session_dir: Path,
     logger: JsonlLogger,
 ) -> dict[str, Any]:
@@ -519,6 +530,8 @@ def run_execution_supervisor(
         cmd.extend(["--market-snapshot-json", str(market_snapshot)])
     if route_dry_run:
         cmd.append("--route-dry-run")
+    cmd.extend(["--control-plane-mode", control_plane_mode])
+    cmd.extend(["--control-plane-bot-id", control_plane_bot_id])
 
     worker_dir = session_dir / "execution_supervisor_logs"
     worker_dir.mkdir(parents=True, exist_ok=True)

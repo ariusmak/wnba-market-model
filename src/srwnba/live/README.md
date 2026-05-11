@@ -16,3 +16,9 @@ Canonical live execution is trade-by-default when local operator-control
 files are missing. Use `operator_control.py` for the global trade-default /
 risk-mode file and per-game abort overrides, and `reconciliation.py` for
 startup/runtime Kalshi fills, positions, and open-order recovery.
+
+Remote webapp control wiring lives in `control_plane.py`. Route loops default
+to `local-only`, can be rehearsed with `supabase-shadow`, and should only use
+`supabase-live` once Supabase secrets, dashboard controls, and worker
+acknowledgment are verified. Local JSON controls remain the emergency brake in
+all modes.
