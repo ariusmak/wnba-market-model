@@ -21,6 +21,7 @@ The dashboard is deployed from the private GitHub repo `ariusmak/wnba_kalshi_pro
 - `supabase_io.py` - all Supabase reads/writes used by the dashboard and seed script.
 - `sql/schema.sql` - canonical full schema for a fresh Supabase project.
 - `sql/patch_worker_ack_status.sql` - adds `bot_heartbeat.last_control_seen_at` for worker command acknowledgment.
+- `pipelines/07_live/18_control_plane_smoke.py` - command-line Supabase schema/acknowledgment smoke test.
 - `scripts/seed_fake_data.py` - fake data seeder for UI QA only.
 - `.streamlit/secrets.example.toml` - secret names only. Do not put real secrets in git.
 
@@ -214,7 +215,25 @@ Existing Supabase used in this project:
 1. run `sql/patch_worker_ack_status.sql` if `bot_heartbeat.last_control_seen_at` is missing,
 2. run `sql/patch_market_controls_cancel_passives.sql` if `market_controls.cancel_passive_orders` is missing,
 3. set Streamlit secrets in Streamlit Cloud,
-4. deploy from private GitHub repo with entrypoint `app.py`.
+4. run the control-plane smoke in read-only mode,
+5. deploy from private GitHub repo with entrypoint `app.py`.
+
+Control-plane smoke:
+
+```powershell
+python pipelines\07_live\18_control_plane_smoke.py
+```
+
+After the daemon is running in `supabase-shadow`, run the full acknowledgment
+rehearsal:
+
+```powershell
+python pipelines\07_live\18_control_plane_smoke.py --write-noop-command --require-daemon-ack --ack-timeout-s 180
+```
+
+The no-op smoke command writes only a `control_commands` audit row with
+`command_type=SMOKE_TEST_NOOP`; it does not mutate `control_state` or
+`market_controls`.
 
 ## QA Checklist
 
@@ -222,6 +241,13 @@ Run before pushing dashboard changes:
 
 ```powershell
 python -m compileall -q app.py supabase_io.py scripts\seed_fake_data.py
+```
+
+Also compile the smoke script:
+
+```powershell
+python -m compileall -q pipelines\07_live\18_control_plane_smoke.py
+python pipelines\07_live\18_control_plane_smoke.py --help
 ```
 
 Run the Streamlit render test pattern from local dev if secrets are configured:

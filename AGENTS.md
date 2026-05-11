@@ -213,6 +213,7 @@ For live-run games that later settle, the historical gold row should prefer the 
 - `pipelines/07_live/09_combine_gold.py`: all-settled combined training CSV builder.
 - `pipelines/07_live/13_validate_production_artifacts.py`: hard production artifact checks.
 - `pipelines/07_live/16_execution_supervisor.py`: one-process-per-game launcher and route-loop health registry.
+- `pipelines/07_live/18_control_plane_smoke.py`: Supabase schema, no-op command, and daemon acknowledgment smoke test.
 - `src/srwnba/storage/bronze.py`: staged bronze writer.
 - `src/srwnba/live/canonical/portfolio.py`: Kalshi wealth/cash resolver plus imaginary sizing/cash overrides.
 - `src/srwnba/live/canonical/operator_control.py`: trade-default, risk-mode, and per-game abort resolver.

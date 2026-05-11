@@ -35,6 +35,14 @@ The live daemon also publishes a `bot_heartbeat` control acknowledgment in
 Supabase modes, so global dashboard commands are observable even before any
 per-game route loop is running.
 
+Use `18_control_plane_smoke.py` as the pre-live remote-control rehearsal:
+
+```powershell
+python pipelines\07_live\18_control_plane_smoke.py --write-noop-command --require-daemon-ack --ack-timeout-s 180
+```
+
+The no-op command writes only an audit row and must not mutate `control_state`.
+
 Local JSON controls remain the final emergency brake in every mode; Supabase can only add restrictions or lower caps.
 
 When available cash is binding across multiple otherwise eligible live tickets, cash allocation must use `src/srwnba/live/canonical/cash_priority.py`: exact marginal expected log growth per dollar, with current fills plus reserved open orders included as existing position cost.
