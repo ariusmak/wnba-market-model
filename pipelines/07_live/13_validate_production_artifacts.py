@@ -30,7 +30,7 @@ from srwnba.util.model_schema import FEAT_COLS, GOLD_MODEL_INPUT_COLS
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--year", type=int, required=True)
-    ap.add_argument("--today", default="2026-05-10")
+    ap.add_argument("--today", default=date.today().isoformat())
     ap.add_argument("--start-year", type=int, default=2015)
     args = ap.parse_args()
 
