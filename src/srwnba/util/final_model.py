@@ -109,16 +109,31 @@ def _make_dmatrix(df, feature_cols, has_label=True):
     - Accepts either 'p_elo' (probability) or pre-computed 'base_margin' (logit)
     - Missing player slots should be NaN (the gold table uses NULL), handled by XGBoost natively
     """
-    avail = [c for c in feature_cols if c in df.columns]
-    X = df[avail].values.astype(float)
-    y = df[LABEL_COL].values.astype(float) if has_label and LABEL_COL in df.columns else None
-    dm = xgb.DMatrix(X, label=y, feature_names=avail, missing=np.nan)
+    feature_cols = list(feature_cols)
+    missing = [c for c in feature_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"gold input missing {len(missing)} required model feature columns: {missing[:10]}")
+    if has_label and LABEL_COL not in df.columns:
+        raise ValueError(f"training input missing required label column: {LABEL_COL}")
+    if ELO_PROB_COL not in df.columns and "base_margin" not in df.columns:
+        raise ValueError(f"gold input must include either {ELO_PROB_COL!r} or 'base_margin'")
+
+    X = df[feature_cols].values.astype(float)
+    y = df[LABEL_COL].values.astype(float) if has_label else None
+    dm = xgb.DMatrix(X, label=y, feature_names=feature_cols, missing=np.nan)
     # Set Elo prior as base_margin — XGBoost predicts logit(p) = base_margin + tree_output
     if ELO_PROB_COL in df.columns:
-        p_elo = clip_probs(df[ELO_PROB_COL].values)
+        p_elo = pd.to_numeric(df[ELO_PROB_COL], errors="coerce").to_numpy(dtype=float)
+        if np.isnan(p_elo).any() or not np.isfinite(p_elo).all():
+            raise ValueError(f"{ELO_PROB_COL} must be numeric and finite for every row")
+        if not ((p_elo > 0) & (p_elo < 1)).all():
+            raise ValueError(f"{ELO_PROB_COL} must be strictly between 0 and 1 for every row")
         dm.set_base_margin(logit(p_elo))
     elif "base_margin" in df.columns:
-        dm.set_base_margin(df["base_margin"].values.astype(float))
+        base_margin = pd.to_numeric(df["base_margin"], errors="coerce").to_numpy(dtype=float)
+        if np.isnan(base_margin).any() or not np.isfinite(base_margin).all():
+            raise ValueError("base_margin must be numeric and finite for every row")
+        dm.set_base_margin(base_margin)
     return dm
 
 

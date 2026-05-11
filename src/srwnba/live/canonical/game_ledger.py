@@ -51,6 +51,18 @@ APPEND_FILES = {
     "cash_coordination": "cash_priority.jsonl",
 }
 
+REQUIRED_REVIEW_JSONL_FILES = (
+    "events.jsonl",
+    "market_snapshots.jsonl",
+    "route_quotes.jsonl",
+    "portfolio_sizing.jsonl",
+    "execution_plans.jsonl",
+    "orders.jsonl",
+    "fills.jsonl",
+    "positions.jsonl",
+    "errors.jsonl",
+)
+
 
 @dataclass
 class GameLedger:
@@ -84,6 +96,7 @@ class GameLedger:
         self.root_dir = Path(self.root_dir)
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.root_dir.mkdir(parents=True, exist_ok=True)
+        self._touch_required_review_files()
         manifest = {
             "schema_version": LEDGER_SCHEMA_VERSION,
             "game_id": self.game_id,
@@ -102,6 +115,11 @@ class GameLedger:
     @property
     def session_dir(self) -> Path:
         return self.root_dir / "sessions" / self.run_id
+
+    def _touch_required_review_files(self) -> None:
+        for base_dir in (self.root_dir, self.session_dir):
+            for filename in REQUIRED_REVIEW_JSONL_FILES:
+                (base_dir / filename).touch(exist_ok=True)
 
     def write_event(self, event: Mapping[str, Any]) -> Dict[str, Any]:
         payload = _jsonable({

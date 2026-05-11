@@ -13,6 +13,7 @@ for live trading:
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from datetime import date
@@ -58,49 +59,21 @@ def main() -> None:
     if len(FEAT_COLS) != 160:
         errors.append(f"FEAT_COLS expected 160, got {len(FEAT_COLS)}")
 
-    if not gold_path.exists():
-        errors.append(f"missing gold file: {gold_path}")
-    else:
-        gold = pd.read_csv(gold_path)
-        cols = list(gold.columns)
-        if cols != GOLD_MODEL_INPUT_COLS:
-            errors.append(
-                f"{gold_path.name} schema mismatch: expected {len(GOLD_MODEL_INPUT_COLS)} cols, got {len(cols)}"
-            )
-        stale_cols = [
-            c for c in cols
-            if re.search(r"_(p(?:8|9|10|11|12))_", c)
-            or c.endswith("_player_id")
-            or c.endswith("_player_name")
-            or c.endswith("_strength_pre")
-            or c.endswith("_origin_city_pre")
-            or c.endswith("_current_city_pre")
-        ]
-        if stale_cols:
-            errors.append(f"stale/debug columns leaked into gold: {stale_cols[:10]}")
-        meta_required = [
-            "game_id", "game_ts", "game_date", "season", "is_playoff",
-            "home_team_id", "away_team_id", "home_elo_pre", "away_elo_pre",
-            "p_elo", "base_margin",
-        ]
-        null_meta = gold[meta_required].isna().sum()
-        bad_meta = null_meta[null_meta > 0].to_dict()
-        if bad_meta:
-            errors.append(f"gold metadata has nulls: {bad_meta}")
-        if "game_id" in gold.columns and gold["game_id"].duplicated().any():
-            errors.append(f"{gold_path.name} has duplicate game_id rows")
-        label_errors = validate_binary_label(gold, gold_path.name)
-        errors.extend(label_errors)
-        null_features = gold[FEAT_COLS].isna().sum()
-        bad_features = null_features[null_features > 0].to_dict()
-        if bad_features:
-            errors.append(f"gold model features have nulls: {bad_features}")
-        p_elo = pd.to_numeric(gold["p_elo"], errors="coerce")
-        if p_elo.isna().any() or not ((p_elo > 0) & (p_elo < 1)).all():
-            errors.append("p_elo must be non-null and strictly between 0 and 1")
-        base_margin = pd.to_numeric(gold["base_margin"], errors="coerce")
-        if base_margin.isna().any() or not np.isfinite(base_margin).all():
-            errors.append("base_margin must be finite for every gold row")
+    yearly_gold: dict[int, pd.DataFrame] = {}
+    for y in range(args.start_year, args.year + 1):
+        yearly_path = REPO_ROOT / "data" / "gold" / f"game_xgboost_input_{y}_REGPST.csv"
+        yearly, yearly_errors = validate_gold_table(yearly_path)
+        errors.extend(yearly_errors)
+        if yearly is not None:
+            yearly_gold[y] = yearly
+
+    holdout_baseline_path = REPO_ROOT / "data" / "gold" / "game_xgboost_input_2015_2024_REGPST.csv"
+    if holdout_baseline_path.exists():
+        _, holdout_errors = validate_gold_table(holdout_baseline_path)
+        errors.extend(holdout_errors)
+
+    gold = yearly_gold.get(args.year)
+    if gold is not None:
         for col in ("home_p1_m_ewma_pre", "away_p1_m_ewma_pre"):
             if col in gold.columns and (pd.to_numeric(gold[col], errors="coerce") == 0).all():
                 errors.append(f"{col} is all zero in {gold_path.name}")
@@ -158,42 +131,28 @@ def main() -> None:
     if future_files:
         errors.append(f"future daily-injury files in canonical bronze: {future_files[:10]}")
 
+    errors.extend(validate_bronze_run_manifests())
     errors.extend(validate_franchise_continuity(args.year, gold))
 
     if args.year >= 2026:
         if not combined_path.exists():
             errors.append(f"missing production combined training file: {combined_path}")
         else:
-            combined = pd.read_csv(combined_path)
-            if list(combined.columns) != GOLD_MODEL_INPUT_COLS:
-                errors.append(
-                    f"{combined_path.name} schema mismatch: expected {len(GOLD_MODEL_INPUT_COLS)} cols, "
-                    f"got {len(combined.columns)}"
-                )
-            if "game_id" in combined.columns and combined["game_id"].duplicated().any():
-                errors.append(f"{combined_path.name} has duplicate game_id rows")
-            errors.extend(validate_binary_label(combined, combined_path.name))
-            combined_p_elo = pd.to_numeric(combined["p_elo"], errors="coerce")
-            if combined_p_elo.isna().any() or not ((combined_p_elo > 0) & (combined_p_elo < 1)).all():
-                errors.append(f"{combined_path.name} p_elo must be non-null and strictly between 0 and 1")
-            combined_base_margin = pd.to_numeric(combined["base_margin"], errors="coerce")
-            if combined_base_margin.isna().any() or not np.isfinite(combined_base_margin).all():
-                errors.append(f"{combined_path.name} base_margin must be finite for every row")
+            combined, combined_errors = validate_gold_table(combined_path)
+            errors.extend(combined_errors)
 
             expected_rows = 0
             missing_from_combined: list[str] = []
-            combined_ids = set(combined["game_id"].astype(str)) if "game_id" in combined.columns else set()
+            combined_ids = set(combined["game_id"].astype(str)) if combined is not None and "game_id" in combined.columns else set()
             for y in range(args.start_year, args.year + 1):
-                yearly_path = REPO_ROOT / "data" / "gold" / f"game_xgboost_input_{y}_REGPST.csv"
-                if not yearly_path.exists():
-                    errors.append(f"missing yearly gold file required by combined training CSV: {yearly_path}")
+                yearly = yearly_gold.get(y)
+                if yearly is None:
                     continue
-                yearly = pd.read_csv(yearly_path, usecols=["game_id"])
                 expected_rows += len(yearly)
                 missing_from_combined.extend(
                     sorted(set(yearly["game_id"].astype(str)) - combined_ids)
                 )
-            if len(combined) != expected_rows:
+            if combined is not None and len(combined) != expected_rows:
                 errors.append(
                     f"{combined_path.name} row count stale: expected {expected_rows} from yearly gold, got {len(combined)}"
                 )
@@ -219,6 +178,72 @@ def main() -> None:
     print(f"  game_player_store={player_path}")
 
 
+def validate_gold_table(path: Path) -> tuple[pd.DataFrame | None, list[str]]:
+    errors: list[str] = []
+    if not path.exists():
+        return None, [f"missing gold file: {path}"]
+
+    df = pd.read_csv(path)
+    cols = list(df.columns)
+    if cols != GOLD_MODEL_INPUT_COLS:
+        missing = [c for c in GOLD_MODEL_INPUT_COLS if c not in cols]
+        extra = [c for c in cols if c not in GOLD_MODEL_INPUT_COLS]
+        errors.append(
+            f"{path.name} schema mismatch: expected exact ordered {len(GOLD_MODEL_INPUT_COLS)} cols, "
+            f"got {len(cols)}; missing={missing[:10]} extra={extra[:10]}"
+        )
+
+    stale_cols = [
+        c for c in cols
+        if re.search(r"_(p(?:8|9|10|11|12))_", c)
+        or c.endswith("_player_id")
+        or c.endswith("_player_name")
+        or c.endswith("_strength_pre")
+        or c.endswith("_origin_city_pre")
+        or c.endswith("_current_city_pre")
+    ]
+    if stale_cols:
+        errors.append(f"{path.name} stale/debug columns leaked into gold: {stale_cols[:10]}")
+
+    if "game_id" in df.columns and df["game_id"].duplicated().any():
+        errors.append(f"{path.name} has duplicate game_id rows")
+    errors.extend(validate_binary_label(df, path.name))
+
+    meta_required = [
+        "game_id", "game_ts", "game_date", "season", "is_playoff",
+        "home_team_id", "away_team_id", "home_elo_pre", "away_elo_pre",
+        "p_elo", "base_margin",
+    ]
+    missing_meta = [c for c in meta_required if c not in df.columns]
+    if missing_meta:
+        errors.append(f"{path.name} missing gold metadata columns: {missing_meta}")
+    else:
+        null_meta = df[meta_required].isna().sum()
+        bad_meta = null_meta[null_meta > 0].to_dict()
+        if bad_meta:
+            errors.append(f"{path.name} metadata has nulls: {bad_meta}")
+
+    missing_features = [c for c in FEAT_COLS if c not in df.columns]
+    if missing_features:
+        errors.append(f"{path.name} missing model feature columns: {missing_features[:10]}")
+    else:
+        null_features = df[FEAT_COLS].isna().sum()
+        bad_features = null_features[null_features > 0].to_dict()
+        if bad_features:
+            errors.append(f"{path.name} model features have nulls: {bad_features}")
+
+    if "p_elo" in df.columns:
+        p_elo = pd.to_numeric(df["p_elo"], errors="coerce")
+        if p_elo.isna().any() or not ((p_elo > 0) & (p_elo < 1)).all():
+            errors.append(f"{path.name} p_elo must be non-null and strictly between 0 and 1")
+    if "base_margin" in df.columns:
+        base_margin = pd.to_numeric(df["base_margin"], errors="coerce")
+        if base_margin.isna().any() or not np.isfinite(base_margin).all():
+            errors.append(f"{path.name} base_margin must be finite for every row")
+
+    return df, errors
+
+
 def validate_binary_label(df: pd.DataFrame, name: str) -> list[str]:
     if "home_win" not in df.columns:
         return [f"{name} missing home_win label column"]
@@ -229,6 +254,30 @@ def validate_binary_label(df: pd.DataFrame, name: str) -> list[str]:
     if bad:
         return [f"{name} home_win labels must be binary 0/1; saw {bad[:10]}"]
     return []
+
+
+def validate_bronze_run_manifests() -> list[str]:
+    run_root = REPO_ROOT / "data" / "bronze_runs"
+    if not run_root.exists():
+        return []
+
+    errors: list[str] = []
+    required_if_accepted = ("endpoint", "request_url", "canonical_path", "sha256")
+    for manifest_path in sorted(run_root.glob("*/manifest.json")):
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            errors.append(f"{manifest_path.relative_to(REPO_ROOT)} unreadable manifest: {exc}")
+            continue
+
+        if manifest.get("accepted") is True:
+            missing = [key for key in required_if_accepted if not manifest.get(key)]
+            if missing:
+                errors.append(
+                    f"{manifest_path.relative_to(REPO_ROOT)} accepted bronze manifest missing fields: {missing}"
+                )
+
+    return errors
 
 
 def validate_franchise_continuity(year: int, gold: pd.DataFrame | None) -> list[str]:

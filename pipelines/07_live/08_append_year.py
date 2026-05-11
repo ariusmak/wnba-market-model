@@ -14,9 +14,9 @@ What it runs (per year Y):
   2. Parse   : played-games manifest, outcomes, injury events/episodes,
                game availability, player game-box (canonical facts in data/silver/)
   3. Feature : daily player state remains in data/silver/; game-as-of feature
-               families such as game_team_player, recent form, style profile,
-               schedule context, franchise Elo, and franchise recent form go to
-               data/silver_plus/
+               families such as game_team_player, franchise recent form,
+               franchise style profile, schedule context, and franchise Elo go
+               to data/silver_plus/
   4. Multiyear: re-runs Elo and franchise-Elo across [2015..Y]
   5. Gold    : data/gold/game_xgboost_input_{Y}_REGPST.csv
 
@@ -88,15 +88,13 @@ PHASES: dict[str, List[Tuple[str, List[str]]]] = {
     ],
     "feature": [
         # Per-year feature builders. 25 (played_franchise_games) is foundational
-        # for 24/26/28 so it runs early. 21→22 is the player-slot chain. 23/24
-        # are independent recent-form / style builders. 26+28 are franchise-level
-        # rollups that need 24/23 + 25. 29 is rest/travel from bronze + outcomes.
+        # for franchise-level style/recent form so it runs early. 21→22 is the
+        # player-slot chain. 26+28 are the canonical franchise-level feature
+        # families consumed by gold. 29 is rest/travel from bronze + outcomes.
         ("03_features/21_build_player_state_history_year.py",
          ["--year", "{Y}", "--through-date", "{THROUGH_DATE}"]),
         ("03_features/22_build_game_team_player_year.py", ["--year", "{Y}"]),
         ("03_features/25_build_played_franchise_games_year.py", ["--year", "{Y}"]),
-        ("03_features/23_build_game_team_recent_form_year.py", ["--year", "{Y}"]),
-        ("03_features/24_build_game_team_style_profile_year.py", ["--year", "{Y}"]),
         ("03_features/26_build_franchise_style_profile.py", ["--year", "{Y}"]),
         ("03_features/28_build_franchise_recent_form.py", ["--year", "{Y}"]),
         ("03_features/29_build_game_team_schedule_context.py", ["--year", "{Y}"]),
