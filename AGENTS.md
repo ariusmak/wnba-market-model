@@ -101,7 +101,7 @@ Production timing is locked:
 - Official pregame probability packet: T-20h.
 - Manual review deadline and earliest automated trading eligibility: T-18h.
 
-Production training after launch uses the current all-settled combined gold CSV. For 2026 production, the canonical live route loop is hardcoded to train from `data/gold/game_xgboost_input_2015_2026_REGPST.csv`. Do not pass, re-enable, or depend on live `--train-csv` overrides. `FinalModel` uses the locked `XGB_PRODUCTION_NUM_BOOST_ROUND = 88` tree count on that full file; it does not early-stop against the partial 2026 slice. The `2015_2024` file is only the 2025 holdout regression baseline.
+Production training after launch uses the current all-settled combined gold CSV. For 2026 production, the T-20 prediction packet builder and canonical live route loop are hardcoded to train from `data/gold/game_xgboost_input_2015_2026_REGPST.csv`. Do not pass, re-enable, or depend on live `--train-csv` overrides. `FinalModel` uses the locked `XGB_PRODUCTION_NUM_BOOST_ROUND = 88` tree count on that full file; it does not early-stop against the partial 2026 slice. The `2015_2024` file is only the 2025 holdout regression baseline.
 
 Date-indexed `daily_injuries` is the historical injury source of truth. It must be backfilled from the last accepted injury date through today. Recent dates are mutable, so the ingest must force-refresh the recent lookback window, defaulting to today plus yesterday, and preserve each response as a timestamped bronze payload. Do not create or reuse future daily-injury placeholders. `/league/injuries.json` may be pulled once at T-20 as a current-state audit cross-check, but it is not the primary historical feature feed.
 

@@ -1,6 +1,6 @@
 # WNBA Prediction Market Model
 
-A live trading system for WNBA moneyline contracts on Kalshi. It prices each game with a calibrated Elo + XGBoost model, then uses the locked v1.2 execution engine to build controlled pre-tipoff selected-team-wins exposure through confirmed equivalent routes, liquidity caps, fee-adjusted half-Kelly sizing, and hold-to-settlement exits.
+A live trading system for WNBA moneyline contracts on Kalshi. It prices each game with the locked Elo + XGBoost model, then uses the locked v1.2 execution engine to build controlled pre-tipoff selected-team-wins exposure through confirmed equivalent routes, liquidity caps, fee-adjusted half-Kelly sizing, and hold-to-settlement exits.
 
 > Research and tuning are complete. The forecasting stack, feature set, training procedure, data-pull timing, and execution architecture are **frozen** as production truth. The v1.2 execution spec locks entry timing, routing, liquidity caps, order cadence, passive probes, risk checks, audit logging, and expansion-team trading gates. See [`CLAUDE.md`](CLAUDE.md) for the strict AI implementation contract.
 
@@ -193,7 +193,7 @@ python pipelines/07_live/canonical/05_run_route_entry_loop.py \
     --dry-run
 ```
 
-The production live route loop is hardcoded to train from `data/gold/game_xgboost_input_2015_2026_REGPST.csv`. Passing `--train-csv` is deprecated and ignored. `FinalModel` trains on that full file with the locked 88-tree final count, not an early-stop round selected from partial 2026. Keep `2015_2024` for reproducing the 2025 holdout reference numbers, not for live production trading.
+The production T-20 prediction packet builder and live route loop are hardcoded to train from `data/gold/game_xgboost_input_2015_2026_REGPST.csv`. Passing `--train-csv` is deprecated and ignored. `FinalModel` trains on that full file with the locked 88-tree final count, not an early-stop round selected from partial 2026. Keep `2015_2024` for reproducing the 2025 holdout reference numbers, not for live production trading.
 
 By default the route loop refreshes Kalshi wealth every 300 seconds. It sizes from Kalshi `portfolio_value` and uses Kalshi `balance` as the available-cash cap. `--sizing-bankroll-override` replaces only the sizing bankroll, even if it is smaller or larger than Kalshi wealth. `--available-cash-override` replaces the cash cap.
 

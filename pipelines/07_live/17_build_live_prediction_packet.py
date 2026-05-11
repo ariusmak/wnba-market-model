@@ -41,7 +41,7 @@ def main() -> None:
     ap.add_argument("--year", type=int, required=True)
     ap.add_argument("--game-id", required=True)
     ap.add_argument("--asof", default=None, help="As-of timestamp, ISO. Defaults to now UTC.")
-    ap.add_argument("--train-csv", default=str(PRODUCTION_TRAIN_CSV))
+    ap.add_argument("--train-csv", default=None, help=argparse.SUPPRESS)
     ap.add_argument("--feature-csv", default=None)
     ap.add_argument("--packet-json", default=None)
     ap.add_argument("--market-snapshot-json", default=None)
@@ -51,7 +51,13 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    train_csv = Path(args.train_csv)
+    if args.train_csv:
+        print(
+            f"[live-packet] ignoring deprecated --train-csv={args.train_csv}; "
+            f"using locked production CSV {PRODUCTION_TRAIN_CSV}",
+            file=sys.stderr,
+        )
+    train_csv = PRODUCTION_TRAIN_CSV
     if not train_csv.exists():
         raise FileNotFoundError(train_csv)
 

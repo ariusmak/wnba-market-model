@@ -200,7 +200,7 @@ python pipelines/07_live/canonical/05_run_route_entry_loop.py \
     --dry-run
 ```
 
-The production live route loop is hardcoded to train from `data/gold/game_xgboost_input_2015_2026_REGPST.csv`. Do not pass or depend on `--train-csv`; if it is present for backward compatibility, it is ignored. `FinalModel` trains on that full file with the locked 88-tree final count, not an early-stop round selected from partial 2026. The `2015_2024` file remains the 2025 holdout regression baseline only.
+The production T-20 prediction packet builder and live route loop are hardcoded to train from `data/gold/game_xgboost_input_2015_2026_REGPST.csv`. Do not pass or depend on `--train-csv`; if it is present for backward compatibility, it is ignored. `FinalModel` trains on that full file with the locked 88-tree final count, not an early-stop round selected from partial 2026. The `2015_2024` file remains the 2025 holdout regression baseline only.
 
 The production live route loop must resolve portfolio sizing from Kalshi before planning. Default:
 - sizing bankroll = Kalshi `/portfolio/balance.portfolio_value`

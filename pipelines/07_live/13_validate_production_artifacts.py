@@ -18,6 +18,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -76,6 +77,10 @@ def main() -> None:
         bad_meta = null_meta[null_meta > 0].to_dict()
         if bad_meta:
             errors.append(f"gold metadata has nulls: {bad_meta}")
+        if "game_id" in gold.columns and gold["game_id"].duplicated().any():
+            errors.append(f"{gold_path.name} has duplicate game_id rows")
+        label_errors = validate_binary_label(gold, gold_path.name)
+        errors.extend(label_errors)
         null_features = gold[FEAT_COLS].isna().sum()
         bad_features = null_features[null_features > 0].to_dict()
         if bad_features:
@@ -83,6 +88,9 @@ def main() -> None:
         p_elo = pd.to_numeric(gold["p_elo"], errors="coerce")
         if p_elo.isna().any() or not ((p_elo > 0) & (p_elo < 1)).all():
             errors.append("p_elo must be non-null and strictly between 0 and 1")
+        base_margin = pd.to_numeric(gold["base_margin"], errors="coerce")
+        if base_margin.isna().any() or not np.isfinite(base_margin).all():
+            errors.append("base_margin must be finite for every gold row")
         for col in ("home_p1_m_ewma_pre", "away_p1_m_ewma_pre"):
             if col in gold.columns and (pd.to_numeric(gold[col], errors="coerce") == 0).all():
                 errors.append(f"{col} is all zero in {gold_path.name}")
@@ -142,6 +150,13 @@ def main() -> None:
                 )
             if "game_id" in combined.columns and combined["game_id"].duplicated().any():
                 errors.append(f"{combined_path.name} has duplicate game_id rows")
+            errors.extend(validate_binary_label(combined, combined_path.name))
+            combined_p_elo = pd.to_numeric(combined["p_elo"], errors="coerce")
+            if combined_p_elo.isna().any() or not ((combined_p_elo > 0) & (combined_p_elo < 1)).all():
+                errors.append(f"{combined_path.name} p_elo must be non-null and strictly between 0 and 1")
+            combined_base_margin = pd.to_numeric(combined["base_margin"], errors="coerce")
+            if combined_base_margin.isna().any() or not np.isfinite(combined_base_margin).all():
+                errors.append(f"{combined_path.name} base_margin must be finite for every row")
 
             expected_rows = 0
             missing_from_combined: list[str] = []
@@ -180,6 +195,18 @@ def main() -> None:
         print(f"  combined_training={combined_path}")
     print(f"  daily_player_state={state_path}")
     print(f"  game_player_store={player_path}")
+
+
+def validate_binary_label(df: pd.DataFrame, name: str) -> list[str]:
+    if "home_win" not in df.columns:
+        return [f"{name} missing home_win label column"]
+    labels = pd.to_numeric(df["home_win"], errors="coerce")
+    if labels.isna().any():
+        return [f"{name} has missing/non-numeric home_win labels"]
+    bad = sorted(set(labels.astype(float)) - {0.0, 1.0})
+    if bad:
+        return [f"{name} home_win labels must be binary 0/1; saw {bad[:10]}"]
+    return []
 
 
 if __name__ == "__main__":
