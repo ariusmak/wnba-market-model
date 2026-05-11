@@ -4,6 +4,12 @@ alter table public.live_market_snapshots add column if not exists trading_status
 alter table public.live_market_snapshots add column if not exists expansion_gate_status text;
 alter table public.live_market_snapshots add column if not exists first_qualified_lead_hours numeric;
 alter table public.live_market_snapshots add column if not exists model_prob numeric;
+alter table public.live_market_snapshots add column if not exists model_prob_t20 numeric;
+alter table public.live_market_snapshots add column if not exists model_prob_latest_pre_t8 numeric;
+alter table public.live_market_snapshots add column if not exists model_prob_change_t20_to_t8 numeric;
+alter table public.live_market_snapshots add column if not exists model_prob_changed_t20_to_t8 boolean not null default false;
+alter table public.live_market_snapshots add column if not exists model_prob_last_refresh_at timestamptz;
+alter table public.live_market_snapshots add column if not exists model_probability_update_count integer;
 alter table public.live_market_snapshots add column if not exists market_prob numeric;
 alter table public.live_market_snapshots add column if not exists abs_edge numeric;
 alter table public.live_market_snapshots add column if not exists norm_edge numeric;

@@ -284,6 +284,12 @@ def pct(value: Any) -> str:
     return f"{float(value):.1%}"
 
 
+def signed_pct(value: Any) -> str:
+    if value is None or pd.isna(value):
+        return "-"
+    return f"{float(value):+.1%}"
+
+
 def price(value: Any) -> str:
     if value is None or pd.isna(value):
         return "-"
@@ -300,6 +306,15 @@ def decimal(value: Any, places: int = 6) -> str:
     if value is None or pd.isna(value):
         return "-"
     return f"{float(value):.{places}f}"
+
+
+def model_odds_change_label(row: dict[str, Any]) -> str:
+    delta = row.get("model_prob_change_t20_to_t8")
+    if delta is None or pd.isna(delta):
+        return "-"
+    moved = bool(row.get("model_prob_changed_t20_to_t8"))
+    marker = "moved" if moved else "flat"
+    return f"{signed_pct(delta)} {marker}"
 
 
 def short_ts(value: Any) -> str:
@@ -551,6 +566,11 @@ def sample_data() -> dict[str, Any]:
                 "trading_status": "eligible",
                 "expansion_gate_status": "clear",
                 "model_prob": 0.66,
+                "model_prob_t20": 0.64,
+                "model_prob_latest_pre_t8": 0.66,
+                "model_prob_change_t20_to_t8": 0.02,
+                "model_prob_changed_t20_to_t8": True,
+                "model_prob_last_refresh_at": now,
                 "market_prob": 0.53,
                 "abs_edge": 0.13,
                 "norm_edge": 0.245,
@@ -592,6 +612,11 @@ def sample_data() -> dict[str, Any]:
                 "trading_status": "expansion_gate",
                 "expansion_gate_status": "blocked_14_prior_games_required",
                 "model_prob": 0.58,
+                "model_prob_t20": 0.58,
+                "model_prob_latest_pre_t8": 0.58,
+                "model_prob_change_t20_to_t8": 0.0,
+                "model_prob_changed_t20_to_t8": False,
+                "model_prob_last_refresh_at": now,
                 "market_prob": 0.45,
                 "abs_edge": 0.13,
                 "norm_edge": 0.289,
@@ -960,6 +985,7 @@ def market_card(row: dict[str, Any], connected: bool) -> None:
         render_stat_grid(
             [
                 ("Model", pct(row.get("model_prob"))),
+                ("T-20 -> T-8", model_odds_change_label(row)),
                 ("Market", price(row.get("market_prob"))),
                 ("Edge", pct(row.get("abs_edge"))),
                 ("Norm", pct(row.get("norm_edge"))),
@@ -1082,6 +1108,7 @@ def live_market_detail(state: dict[str, Any], connected: bool) -> None:
     render_stat_grid(
         [
             ("Model Prob", pct(market.get("model_prob"))),
+            ("T-20 -> T-8", model_odds_change_label(market)),
             ("Exec Price", price(market.get("q_exec_all_in_price"))),
             ("Abs Edge", pct(market.get("abs_edge"))),
             ("Remaining", dollars(market.get("remaining_position_dollars"))),

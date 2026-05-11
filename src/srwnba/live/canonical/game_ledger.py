@@ -36,11 +36,14 @@ ERROR_EVENTS = {
     "portfolio_sizing_error",
     "poll_error",
     "trade_volume_error",
+    "model_probability_refresh_error",
     "passive_cancel_error",
     "passive_status_error",
 }
 
 APPEND_FILES = {
+    "model_probability_refresh": "prediction_updates.jsonl",
+    "model_probability_refresh_skipped": "prediction_updates.jsonl",
     "market_snapshot": "market_snapshots.jsonl",
     "route_quote": "route_quotes.jsonl",
     "route_capacity": "route_capacities.jsonl",
@@ -168,6 +171,11 @@ class GameLedger:
         elif evt == "mapping":
             self._latest_mapping = payload
             self._write_mapping()
+        elif evt == "model_probability_refresh":
+            self._latest_prediction = payload
+            packet = self._prediction_packet_payload(payload)
+            self._write_json(self.root_dir / "prediction_packet.json", packet)
+            self._write_json(self.session_dir / "prediction_packet.json", packet)
         elif evt == "route_candidate":
             self._route_candidates.append(payload)
             self._write_mapping()
@@ -218,7 +226,11 @@ class GameLedger:
                 existing = {}
         if existing.get("schema_version") == "live_prediction_packet_v1":
             merged = dict(existing)
-            merged["route_loop_start"] = dict(route_loop_payload)
+            evt = str(route_loop_payload.get("evt") or "")
+            if evt == "route_loop_start":
+                merged["route_loop_start"] = dict(route_loop_payload)
+            elif evt == "model_probability_refresh":
+                merged["route_loop_latest_probability"] = dict(route_loop_payload)
             merged["route_loop_prediction"] = {
                 key: route_loop_payload.get(key)
                 for key in (
@@ -283,6 +295,12 @@ class GameLedger:
             "dry_run",
             "model_best_round",
             "model_best_round_source",
+            "model_prob_t20_selected",
+            "model_prob_latest_pre_t8_selected",
+            "model_prob_change_t20_to_t8_selected",
+            "model_prob_changed_t20_to_t8",
+            "model_prob_last_refresh_at_utc",
+            "model_probability_update_count",
         }
         return {k: v for k, v in self._latest_prediction.items() if k in keys}
 

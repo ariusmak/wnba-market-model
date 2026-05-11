@@ -76,6 +76,8 @@ def main() -> None:
     ap.add_argument("--market-discovery-limit", type=int, default=100)
     ap.add_argument("--market-poll-s", type=float, default=180.0)
     ap.add_argument("--worker-check-s", type=float, default=300.0)
+    ap.add_argument("--injury-poll-max-age-minutes", type=float, default=60.0,
+                    help="Run injury refresh when the latest accepted injury poll is older than this.")
     ap.add_argument("--execution-check-s", type=float, default=120.0)
     ap.add_argument("--heartbeat-s", type=float, default=60.0)
     ap.add_argument("--once", action="store_true", help="Run one loop iteration and exit.")
@@ -102,6 +104,7 @@ def main() -> None:
 
     lock_owned = acquire_lock(run_id, ignore_lock=args.ignore_lock)
     state = load_state()
+    state["year"] = args.year
     state.setdefault("markets", {})
     state.setdefault("sessions", {})
     session_started_at = utc_now()
@@ -128,6 +131,7 @@ def main() -> None:
         year=args.year,
         market_poll_s=args.market_poll_s,
         worker_check_s=args.worker_check_s,
+        injury_poll_max_age_minutes=args.injury_poll_max_age_minutes,
         execution_check_s=args.execution_check_s,
         heartbeat_s=args.heartbeat_s,
         skip_market_api=args.skip_market_api,
@@ -220,7 +224,50 @@ def main() -> None:
                 finally:
                     last_worker_check = now_mono
 
-            execution_due = due(now_mono, last_execution_check, args.execution_check_s) or market_changed_this_iter
+            injury_changed_this_iter = False
+            if not args.disable_worker and injury_poll_due(
+                state,
+                year=args.year,
+                max_age_minutes=args.injury_poll_max_age_minutes,
+            ):
+                try:
+                    result = run_injury_refresh_worker(
+                        year=args.year,
+                        access_level=args.access_level,
+                        market_snapshot=latest_market_snapshot,
+                        dry_run=args.worker_dry_run,
+                        session_dir=session_dir,
+                        logger=logger,
+                    )
+                    result["success"] = result["returncode"] == 0
+                    state["last_injury_poll_result"] = result
+                    if result["success"]:
+                        state["consecutive_injury_poll_failures"] = 0
+                        injury_changed_this_iter = not args.worker_dry_run
+                    else:
+                        state["consecutive_injury_poll_failures"] = int(
+                            state.get("consecutive_injury_poll_failures", 0)
+                        ) + 1
+                    save_state(state)
+                    last_error = None if result["returncode"] == 0 else f"injury refresh rc={result['returncode']}"
+                except Exception as exc:
+                    last_error = str(exc)
+                    state["consecutive_injury_poll_failures"] = int(
+                        state.get("consecutive_injury_poll_failures", 0)
+                    ) + 1
+                    state["last_injury_poll_result"] = {
+                        "success": False,
+                        "finished_at_utc": utc_now().isoformat(),
+                        "error": last_error,
+                    }
+                    save_state(state)
+                    logger.write("injury_worker_failed", error=last_error)
+
+            execution_due = (
+                due(now_mono, last_execution_check, args.execution_check_s)
+                or market_changed_this_iter
+                or injury_changed_this_iter
+            )
             if not args.disable_execution_supervisor and execution_due:
                 try:
                     result = run_execution_supervisor(
@@ -266,6 +313,7 @@ def main() -> None:
                     last_error=last_error,
                     market_poll_s=args.market_poll_s,
                     worker_check_s=args.worker_check_s,
+                    injury_poll_max_age_minutes=args.injury_poll_max_age_minutes,
                     execution_check_s=args.execution_check_s,
                     heartbeat_s=args.heartbeat_s,
                     skip_market_api=args.skip_market_api,
@@ -502,11 +550,72 @@ def run_refresh_worker(
         "cmd": cmd,
         "returncode": proc.returncode,
         "duration_s": round(duration, 3),
+        "dry_run": bool(dry_run),
         "log_path": str(log_path),
         "started_at_utc": started.isoformat(),
         "finished_at_utc": utc_now().isoformat(),
     }
     logger.write("worker_end", **result)
+    return result
+
+
+def run_injury_refresh_worker(
+    *,
+    year: int,
+    access_level: str,
+    market_snapshot: Path | None,
+    dry_run: bool,
+    session_dir: Path,
+    logger: JsonlLogger,
+) -> dict[str, Any]:
+    cmd = [
+        sys.executable,
+        "pipelines/07_live/14_live_data_refresh.py",
+        "--year",
+        str(year),
+        "--mode",
+        "injury",
+        "--access-level",
+        access_level,
+    ]
+    if market_snapshot is not None and market_snapshot.exists():
+        cmd.extend(["--market-snapshot-json", str(market_snapshot)])
+    else:
+        cmd.append("--skip-market-api")
+    if dry_run:
+        cmd.append("--dry-run")
+
+    worker_dir = session_dir / "injury_worker_logs"
+    worker_dir.mkdir(parents=True, exist_ok=True)
+    started = utc_now()
+    log_path = worker_dir / f"{started.strftime('%Y%m%dT%H%M%SZ')}_14_live_data_refresh_injury.log"
+    logger.write("injury_worker_start", cmd=cmd, log_path=str(log_path))
+    env = os.environ.copy()
+    src = str(SRC_ROOT)
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = src if not existing else src + os.pathsep + existing
+    t0 = time.monotonic()
+    proc = subprocess.run(
+        cmd,
+        cwd=str(REPO_ROOT),
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    duration = time.monotonic() - t0
+    log_path.write_text(proc.stdout or "", encoding="utf-8")
+    result = {
+        "cmd": cmd,
+        "returncode": proc.returncode,
+        "duration_s": round(duration, 3),
+        "dry_run": bool(dry_run),
+        "log_path": str(log_path),
+        "started_at_utc": started.isoformat(),
+        "finished_at_utc": utc_now().isoformat(),
+    }
+    logger.write("injury_worker_end", **result)
     return result
 
 
@@ -575,6 +684,7 @@ def write_heartbeat(
     last_error: str | None,
     market_poll_s: float,
     worker_check_s: float,
+    injury_poll_max_age_minutes: float,
     execution_check_s: float,
     heartbeat_s: float,
     skip_market_api: bool,
@@ -589,6 +699,7 @@ def write_heartbeat(
         last_error=last_error,
         market_poll_s=market_poll_s,
         worker_check_s=worker_check_s,
+        injury_poll_max_age_minutes=injury_poll_max_age_minutes,
         execution_check_s=execution_check_s,
         heartbeat_s=heartbeat_s,
         skip_market_api=skip_market_api,
@@ -610,6 +721,7 @@ def write_heartbeat(
         "latest_market_snapshot_path": state.get("latest_market_snapshot_path"),
         "latest_market_count": state.get("latest_market_count"),
         "last_worker_result": state.get("last_worker_result"),
+        "last_injury_poll_result": state.get("last_injury_poll_result"),
         "last_execution_supervisor_result": state.get("last_execution_supervisor_result"),
         "last_error": last_error,
     }
@@ -629,6 +741,7 @@ def build_health(
     last_error: str | None,
     market_poll_s: float,
     worker_check_s: float,
+    injury_poll_max_age_minutes: float,
     execution_check_s: float,
     heartbeat_s: float,
     skip_market_api: bool,
@@ -737,6 +850,7 @@ def build_health(
 
     if disable_worker:
         add_check("worker", "ok", "refresh worker disabled by flag")
+        add_check("injury_polling", "ok", "injury refresh worker disabled by flag")
     else:
         consecutive_worker_failures = int(state.get("consecutive_worker_failures", 0))
         last_worker = state.get("last_worker_result") or {}
@@ -790,6 +904,52 @@ def build_health(
                 )
             else:
                 add_check("worker_freshness", "ok", "refresh worker completion is recent", age_s=worker_age_s)
+
+        consecutive_injury_failures = int(state.get("consecutive_injury_poll_failures", 0))
+        last_injury = state.get("last_injury_poll_result") or {}
+        last_injury_finished_at = (
+            None if last_injury.get("dry_run") else parse_iso_datetime(last_injury.get("finished_at_utc"))
+        )
+        if last_injury_finished_at is None:
+            last_injury_finished_at = latest_daily_injury_pull_at_utc(int(state.get("year") or 0))
+        injury_age_s = round((now - last_injury_finished_at).total_seconds(), 3) if last_injury_finished_at else None
+        max_age_s = float(injury_poll_max_age_minutes) * 60.0
+        if consecutive_injury_failures >= 3:
+            add_check(
+                "injury_polling",
+                "fail",
+                "three or more consecutive injury refresh failures",
+                consecutive_failures=consecutive_injury_failures,
+                last_injury_poll_result=last_injury,
+            )
+        elif consecutive_injury_failures > 0 or (last_injury and not last_injury.get("success", True)):
+            add_check(
+                "injury_polling",
+                "warn",
+                "latest injury refresh failed",
+                consecutive_failures=consecutive_injury_failures,
+                last_injury_poll_result=last_injury,
+            )
+        elif injury_age_s is None:
+            add_check("injury_polling", "warn", "no accepted daily-injury poll found")
+        elif injury_age_s > max_age_s:
+            add_check(
+                "injury_polling",
+                "warn",
+                "latest injury poll is older than hourly target",
+                age_s=injury_age_s,
+                max_age_s=max_age_s,
+                last_injury_poll_result=last_injury,
+            )
+        else:
+            add_check(
+                "injury_polling",
+                "ok",
+                "latest injury poll is fresh",
+                age_s=injury_age_s,
+                max_age_s=max_age_s,
+                last_injury_poll_result=last_injury,
+            )
 
     if disable_execution_supervisor:
         add_check("execution_supervisor", "ok", "execution supervisor disabled by flag")
@@ -875,6 +1035,7 @@ def build_health(
             "heartbeat_interval_s": heartbeat_s,
             "market_poll_interval_s": market_poll_s,
             "worker_check_interval_s": worker_check_s,
+            "injury_poll_max_age_minutes": injury_poll_max_age_minutes,
             "execution_check_interval_s": execution_check_s,
             "latest_market_count": state.get("latest_market_count"),
             "tracked_markets": len(state.get("latest_open_market_tickers", [])),
@@ -883,6 +1044,7 @@ def build_health(
             "latest_market_snapshot_age_s": latest_snapshot_age_s,
             "consecutive_market_poll_failures": int(state.get("consecutive_market_poll_failures", 0)),
             "consecutive_worker_failures": int(state.get("consecutive_worker_failures", 0)),
+            "consecutive_injury_poll_failures": int(state.get("consecutive_injury_poll_failures", 0)),
             "consecutive_execution_supervisor_failures": int(
                 state.get("consecutive_execution_supervisor_failures", 0)
             ),
@@ -974,6 +1136,33 @@ def market_summary(market: dict[str, Any]) -> dict[str, Any]:
 
 def due(now_mono: float, last_mono: float, interval_s: float) -> bool:
     return last_mono <= 0.0 or (now_mono - last_mono) >= interval_s
+
+
+def injury_poll_due(state: dict[str, Any], *, year: int, max_age_minutes: float) -> bool:
+    last = state.get("last_injury_poll_result") or {}
+    last_finished = None if last.get("dry_run") else parse_iso_datetime(last.get("finished_at_utc"))
+    if last_finished is None:
+        last_finished = latest_daily_injury_pull_at_utc(year)
+    if last_finished is None:
+        return True
+    age_minutes = (utc_now() - last_finished).total_seconds() / 60.0
+    return age_minutes >= float(max_age_minutes)
+
+
+def latest_daily_injury_pull_at_utc(year: int) -> datetime | None:
+    latest: datetime | None = None
+    for path in (REPO_ROOT / "data" / "bronze").glob(f"daily_injuries__{year}-*__*.json"):
+        parts = path.name.split("__")
+        if len(parts) < 3:
+            continue
+        raw = parts[-1].removesuffix(".json")
+        try:
+            pulled = datetime.strptime(raw, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+        if latest is None or pulled > latest:
+            latest = pulled
+    return latest
 
 
 def acquire_lock(run_id: str, *, ignore_lock: bool) -> bool:

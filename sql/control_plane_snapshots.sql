@@ -12,6 +12,12 @@ create table if not exists live_market_snapshots (
     expansion_gate_status text,
     first_qualified_lead_hours numeric,
     model_prob numeric,
+    model_prob_t20 numeric,
+    model_prob_latest_pre_t8 numeric,
+    model_prob_change_t20_to_t8 numeric,
+    model_prob_changed_t20_to_t8 boolean not null default false,
+    model_prob_last_refresh_at timestamptz,
+    model_probability_update_count integer,
     market_prob numeric,
     abs_edge numeric,
     norm_edge numeric,
@@ -62,6 +68,8 @@ create table if not exists live_market_snapshots (
     orderbook_ts timestamptz,
     constraint live_market_price_checks check (
         (model_prob is null or (model_prob >= 0 and model_prob <= 1)) and
+        (model_prob_t20 is null or (model_prob_t20 >= 0 and model_prob_t20 <= 1)) and
+        (model_prob_latest_pre_t8 is null or (model_prob_latest_pre_t8 >= 0 and model_prob_latest_pre_t8 <= 1)) and
         (market_prob is null or (market_prob >= 0 and market_prob <= 1)) and
         (q_max_price is null or (q_max_price >= 0 and q_max_price <= 1)) and
         (q_exec_all_in_price is null or (q_exec_all_in_price >= 0 and q_exec_all_in_price <= 1)) and

@@ -100,6 +100,13 @@ Production timing is locked:
 - Backup/correction refresh: 09:00 ET.
 - Official pregame probability packet: T-20h.
 - Manual review deadline and earliest automated trading eligibility: T-18h.
+- From T-20h through the T-8h no-new-entry boundary, the daemon must keep
+  date-indexed injury data fresh at least hourly. Any refreshed injury/player
+  state that changes an open mapped game's live feature row must regenerate that
+  game's live prediction packet; route loops treat the refreshed probability as
+  the new truth for downstream planning. After exposure exists, a model-side
+  flip must not create offsetting/reducing exposure; block new entry instead and
+  hold existing fills to settlement.
 
 Production training after launch uses the current all-settled combined gold CSV. For 2026 production, the T-20 prediction packet builder and canonical live route loop are hardcoded to train from `data/gold/game_xgboost_input_2015_2026_REGPST.csv`. Do not pass, re-enable, or depend on live `--train-csv` overrides. `FinalModel` uses the locked `XGB_PRODUCTION_NUM_BOOST_ROUND = 88` tree count on that full file; it does not early-stop against the partial 2026 slice. The `2015_2024` file is only the 2025 holdout regression baseline.
 
@@ -193,6 +200,8 @@ Canonical execution must resolve portfolio sizing from Kalshi before planning an
 Local operator controls live under `data/runs/live_control/`. Missing files mean all eligible games trade normally. Global auto-trade off, risk mode `kill`, or a per-game `abort` file blocks new execution. Remote Supabase controls are available through explicit `--control-plane-mode` settings: `local-only`, `supabase-shadow`, and `supabase-live`. In Supabase modes the worker reads remote controls before planning and before live order submission; local JSON controls remain the final emergency brake. The webapp must display the execution default/risk mode plus worker control acknowledgment and expose global default plus per-game abort/clear controls.
 
 Canonical execution must write the structured per-game ledger at `data/runs/live_games/<game_id>/` unless a narrow diagnostic explicitly passes `--no-ledger`. Required review files are `prediction_packet.json` with model best round/source, `market_mapping.json`, raw `market_snapshots.jsonl`, evaluated `route_quotes.jsonl`, `portfolio_sizing.jsonl`, `execution_plans.jsonl`, `orders.jsonl`, `fills.jsonl`, `positions.jsonl`, `errors.jsonl`, and `summary.json`. `data/live_logs/<game_id>.route.jsonl` is the flat raw stream; the per-game ledger is the production audit source for prediction, market, and trade history.
+
+For live-run games that later settle, the historical gold row should prefer the captured live prediction packet/feature row whose source as-of time is no later than T-8. This keeps the settled training database aligned to the latest conditions available before the locked no-new-entry boundary, with the older strict historical silver_plus rebuild only as fallback when no valid live packet exists.
 
 ## 6. Key Files
 

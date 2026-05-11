@@ -221,6 +221,7 @@ def write_live_feature_artifacts(
         "selected_team_id": selected_team_id,
         "selected_team_name": selected_team_name,
         "feature_csv": str(feature_csv),
+        "feature_row": result.feature_row.iloc[0].to_dict(),
         "train_csv": str(train_csv),
         "model_best_round": model_best_round,
         "model_best_round_source": model_best_round_source,
@@ -331,7 +332,9 @@ def _live_player_features(
     state = pd.read_csv(path)
     state["player_id"] = state["player_id"].astype(str)
     state["asof_ts"] = pd.to_datetime(state["asof_ts"], utc=True, errors="coerce")
-    state = state[state["asof_ts"] <= asof_ts].copy()
+    state["asof_date"] = state["asof_ts"].dt.floor("D")
+    asof_day = pd.Timestamp(asof_ts).floor("D")
+    state = state[state["asof_date"] <= asof_day].copy()
     if len(state):
         state = (
             state.sort_values(["player_id", "asof_ts"], kind="stable")

@@ -77,6 +77,10 @@ Use a rotated Supabase service-role/secret key. The publishable key is not enoug
 - `market_controls` - per-game manual override state.
 - `control_commands` - immutable command audit log.
 - `live_market_snapshots` - one current row per active game/canonical exposure.
+  It includes the current model probability plus `model_prob_t20`,
+  `model_prob_latest_pre_t8`, and `model_prob_change_t20_to_t8` so the
+  per-game cards can show whether injury refreshes moved the price between
+  the official T-20 packet and the T-8 no-new-entry boundary.
 - `route_snapshots` - route-level smart-router comparison data.
 - `order_events` - submit/fill/cancel/reject/skip audit stream.
 - `closed_market_summaries` - settled-market summary rows.

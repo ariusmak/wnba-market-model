@@ -276,6 +276,12 @@ class ControlPlaneBridge:
             "phase": _phase_from_decision(decision, reject_reason),
             "trading_status": reject_reason or decision or None,
             "model_prob": _prob(event.get("p_selected")),
+            "model_prob_t20": _prob(event.get("model_prob_t20_selected")),
+            "model_prob_latest_pre_t8": _prob(event.get("model_prob_latest_pre_t8_selected")),
+            "model_prob_change_t20_to_t8": _num(event.get("model_prob_change_t20_to_t8_selected")),
+            "model_prob_changed_t20_to_t8": bool(event.get("model_prob_changed_t20_to_t8") or False),
+            "model_prob_last_refresh_at": event.get("model_prob_last_refresh_at_utc"),
+            "model_probability_update_count": _int(event.get("model_probability_update_count")),
             "bankroll_for_sizing_dollars": _num(context.get("bankroll")),
             "available_cash_after_buffer_dollars": _num(context.get("available_cash_after_buffer_dollars")),
             "target_position_now_dollars": _num(event.get("target_position_dollars")),
@@ -297,7 +303,8 @@ class ControlPlaneBridge:
             "last_action": decision,
             "last_reject_reason": reject_reason or None,
             "number_of_order_attempts": len(event.get("orders") or []),
-            "model_snapshot_ts": utc_now_iso(),
+            "model_snapshot_ts": event.get("model_prob_last_refresh_at_utc") or utc_now_iso(),
+            "injury_data_ts": event.get("model_prob_last_refresh_at_utc"),
         }
         self._safe_upsert("live_market_snapshots", row, on_conflict="game_id")
 

@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from collections import Counter
 
+import pandas as pd
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "src"))
@@ -702,6 +704,12 @@ class FakePredictor:
         return {"p_home": [0.72]}
 
 
+class FeatureColumnPredictor:
+    def predict(self, df):
+        p = float(df["p_home_override"].iloc[0])
+        return {"p_home": [p], "p_raw": [p], "p_elo": [0.5]}
+
+
 def test_route_loop_blocks_expansion_team_under_gate() -> None:
     washington_id = "5c0d47fe-8539-47b0-9f36-d0b3609ca89b"
     scheduled = datetime(2026, 5, 8, 23, 30, tzinfo=timezone.utc)
@@ -780,6 +788,94 @@ def test_route_loop_blocks_expansion_team_under_gate() -> None:
     assert plan["expansion_team_gate_passed"] is False
     assert "blocked_expansion_team_under_14_completed_games" in plan["reject_reason"]
     print("  route loop expansion gate block OK")
+
+
+def test_route_loop_reloads_feature_probability_before_t8() -> None:
+    atlanta_id = "5d70a9af-8c2b-4aec-9e68-9acc6ddb93e4"
+    washington_id = "5c0d47fe-8539-47b0-9f36-d0b3609ca89b"
+    scheduled = datetime(2026, 5, 8, 23, 30, tzinfo=timezone.utc)
+    event_ticker = "KXWNBAGAME-26MAY08ATLWAS"
+    atlanta_ticker = f"{event_ticker}-ATL"
+    washington_ticker = f"{event_ticker}-WAS"
+    markets = [
+        {
+            "ticker": atlanta_ticker,
+            "event_ticker": event_ticker,
+            "title": "Atlanta vs Washington winner?",
+            "yes_sub_title": "Atlanta Dream",
+            "status": "active",
+            "market_type": "binary",
+            "rules_primary": (
+                "If Atlanta Dream wins the Atlanta vs Washington women's professional basketball game "
+                "originally scheduled for May 8, 2026, then the market resolves to Yes."
+            ),
+            "custom_strike": {"basketball_team": atlanta_id},
+        },
+        {
+            "ticker": washington_ticker,
+            "event_ticker": event_ticker,
+            "title": "Atlanta vs Washington winner?",
+            "yes_sub_title": "Washington Mystics",
+            "status": "active",
+            "market_type": "binary",
+            "rules_primary": (
+                "If Washington Mystics wins the Atlanta vs Washington women's professional basketball game "
+                "originally scheduled for May 8, 2026, then the market resolves to Yes."
+            ),
+            "custom_strike": {"basketball_team": washington_id},
+        },
+    ]
+    fake = FakeExpansionRouteClient({
+        atlanta_ticker: {"yes": [[50, 1000]], "no": [[50, 1000]]},
+        washington_ticker: {"yes": [[50, 1000]], "no": [[50, 1000]]},
+    })
+    with TemporaryDirectory() as tmp:
+        feature_csv = Path(tmp) / "unit_feature.csv"
+        pd.DataFrame([{"game_id": "unit-prob-refresh", "p_home_override": 0.72}]).to_csv(feature_csv, index=False)
+        log_path = Path(tmp) / "events.jsonl"
+        ctx = RouteEntryContext(
+            game=SportRadarGameRef(
+                game_id="unit-prob-refresh",
+                scheduled=scheduled,
+                home_team_id=atlanta_id,
+                away_team_id=washington_id,
+                home_team_name="Atlanta Dream",
+                away_team_name="Washington Mystics",
+            ),
+            tipoff_ts_s=int(scheduled.timestamp()),
+            feature_row=pd.read_csv(feature_csv),
+            feature_csv_path=feature_csv,
+            team_name_map_path=REPO_ROOT / "data" / "config" / "kalshi_team_name_map.csv",
+        )
+        loop = RouteEntryLoop(
+            predictor=FeatureColumnPredictor(),
+            client=fake,
+            ctx=ctx,
+            cfg=ExecutionConfig(bankroll=5000.0),
+            log_path=log_path,
+            poll_interval_s=0.0,
+            dry_run=False,
+            markets=markets,
+            feature_reload_interval_s=0.0,
+        )
+        assert loop.selected_team_id == atlanta_id
+        pd.DataFrame([{"game_id": "unit-prob-refresh", "p_home_override": 0.40}]).to_csv(feature_csv, index=False)
+        loop.feature_mtime_ns = 0
+        loop._refresh_feature_probability(now_s=float(ctx.tipoff_ts_s) - 10.0 * 3600.0)
+        assert loop.selected_team_id == washington_id
+        assert abs(loop.p_selected - 0.60) < 1e-9
+        events = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
+        refresh = next(event for event in events if event["evt"] == "model_probability_refresh")
+        assert refresh["selected_team_change_applied"] is True
+        assert refresh["model_prob_changed_t20_to_t8"] is True
+        pd.DataFrame([{"game_id": "unit-prob-refresh", "p_home_override": 0.80}]).to_csv(feature_csv, index=False)
+        loop.feature_mtime_ns = 0
+        loop._refresh_feature_probability(now_s=float(ctx.tipoff_ts_s) - 7.0 * 3600.0)
+        assert loop.selected_team_id == washington_id
+        assert abs(loop.p_home - 0.40) < 1e-9
+        events = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
+        assert any(event["evt"] == "model_probability_refresh_skipped" for event in events)
+    print("  route loop pre-T8 probability reload/T-8 freeze OK")
 
 
 def test_control_plane_merge_blocks_and_shadows() -> None:
@@ -924,6 +1020,7 @@ def main() -> None:
     test_v1_2_conservative_mode()
     test_v1_2_splits_tied_routes()
     test_route_loop_blocks_expansion_team_under_gate()
+    test_route_loop_reloads_feature_probability_before_t8()
     test_control_plane_merge_blocks_and_shadows()
     print("[mapping/execution] OK")
 

@@ -81,6 +81,7 @@ class RouteEntryContext:
     tipoff_ts_s: int
     feature_row: pd.DataFrame
     team_name_map_path: Path
+    feature_csv_path: Optional[Path] = None
     series_tickers: Sequence[str] = DEFAULT_SERIES_TICKERS
     market_discovery_limit: int = 100
     completed_games_by_team: Mapping[str, int] = field(default_factory=dict)
@@ -140,12 +141,25 @@ class RouteEntryLoop:
         control_plane_mode: str = "local-only",
         control_plane_bot_id: str = "wnba-route-worker",
         control_plane_bridge: Optional[ControlPlaneBridge] = None,
+        feature_reload_interval_s: float = 60.0,
         position_reconcile_interval_s: float = 300.0,
         startup_reconciliation: bool = True,
     ) -> None:
         self.predictor = predictor
         self.client = client
         self.ctx = ctx
+        self.feature_row = ctx.feature_row.copy()
+        self.feature_csv_path = Path(ctx.feature_csv_path) if ctx.feature_csv_path else None
+        self.feature_mtime_ns = _path_mtime_ns(self.feature_csv_path)
+        self.feature_reload_interval_s = max(0.0, float(feature_reload_interval_s))
+        self.last_feature_reload_s: Optional[float] = None
+        self.model_probability_update_count = 0
+        self.model_prob_last_refresh_at_utc = utc_now_iso()
+        self.model_probability_block_reason: Optional[str] = None
+        self.initial_p_home_model: Optional[float] = None
+        self.initial_p_selected: Optional[float] = None
+        self.latest_pre_t8_p_home: Optional[float] = None
+        self.latest_pre_t8_p_selected: Optional[float] = None
         self.cfg = cfg or ExecutionConfig()
         self.log_path = Path(log_path) if log_path else None
         self.ledger = ledger
@@ -213,18 +227,18 @@ class RouteEntryLoop:
         elif self.follow_kalshi_wealth or self.sizing_bankroll_override_dollars is not None:
             self._refresh_portfolio_sizing(force=True, emit=False)
 
-        self.prediction_result = predictor.predict(ctx.feature_row)
-        self.p_home_model = float(self.prediction_result["p_home"][0])
-        self.p_home = self.p_home_model
-        self.p_away = 1.0 - self.p_home
-        if self.p_home >= self.p_away:
-            self.selected_team_id = ctx.game.home_team_id
-            self.p_selected = self.p_home
-            self.selected_side_label = "home"
-        else:
-            self.selected_team_id = ctx.game.away_team_id
-            self.p_selected = self.p_away
-            self.selected_side_label = "away"
+        self.prediction_result: Mapping[str, Any] = {}
+        self.p_home_model = 0.0
+        self.p_home = 0.0
+        self.p_away = 1.0
+        self.selected_team_id = ""
+        self.p_selected = 0.0
+        self.selected_side_label = ""
+        self._apply_prediction_row(self.feature_row, source="startup", allow_selected_flip=True, emit=False)
+        self.initial_p_home_model = self.p_home_model
+        self.initial_p_selected = self.p_selected
+        self.latest_pre_t8_p_home = self.p_home_model
+        self.latest_pre_t8_p_selected = self.p_selected
 
         self.markets = (
             list(filter_open_wnba_moneyline_markets(markets))
@@ -274,12 +288,13 @@ class RouteEntryLoop:
             "dry_run": self.dry_run,
             "model_best_round": getattr(self.predictor, "best_round", None),
             "model_best_round_source": getattr(self.predictor, "best_round_source", None),
+            **self._prediction_change_payload(),
             **self.operator_decision.to_log_payload(),
             **self.control_decision.to_log_payload(),
             "portfolio_sizing": (
                 self.portfolio_sizing.to_log_payload() if self.portfolio_sizing else None
             ),
-            "feature_row": _feature_row_payload(self.ctx.feature_row),
+            "feature_row": _feature_row_payload(self.feature_row),
             **self.expansion_gate.to_log_payload(),
         })
         if self.portfolio_sizing is not None:
@@ -323,6 +338,7 @@ class RouteEntryLoop:
     def _poll_once(self, now_s: Optional[float] = None) -> None:
         now = float(now_s if now_s is not None else time.time())
         self._refresh_portfolio_sizing(now_s=now)
+        self._refresh_feature_probability(now_s=now)
         self._refresh_operator_decision()
         self._reconcile_exchange_position(now_s=now, source="runtime", seed=False)
         effective_cfg = self._effective_cfg()
@@ -360,6 +376,10 @@ class RouteEntryLoop:
         if self.execution_block_reason:
             clear_cash_candidate(game_id=self.ctx.game.game_id, coordinator_dir=CASH_COORDINATOR_DIR)
             self._write_blocked_plan(quotes, self.execution_block_reason)
+            return
+        if self.model_probability_block_reason:
+            clear_cash_candidate(game_id=self.ctx.game.game_id, coordinator_dir=CASH_COORDINATOR_DIR)
+            self._write_blocked_plan(quotes, self.model_probability_block_reason)
             return
         if not self.expansion_gate.allowed:
             clear_cash_candidate(game_id=self.ctx.game.game_id, coordinator_dir=CASH_COORDINATOR_DIR)
@@ -438,6 +458,174 @@ class RouteEntryLoop:
 
     def _effective_cfg(self) -> ExecutionConfig:
         return apply_effective_config(self.cfg, self.control_decision)
+
+    def _refresh_feature_probability(self, *, now_s: float) -> None:
+        if self.feature_csv_path is None:
+            return
+        if (
+            self.last_feature_reload_s is not None
+            and now_s - self.last_feature_reload_s < self.feature_reload_interval_s
+        ):
+            return
+        self.last_feature_reload_s = now_s
+        current_mtime_ns = _path_mtime_ns(self.feature_csv_path)
+        if current_mtime_ns is None or current_mtime_ns == self.feature_mtime_ns:
+            return
+        lead_hours = _lead_hours(float(now_s), float(self.ctx.tipoff_ts_s))
+        if lead_hours < self.cfg.no_new_entry_hours_before_tip:
+            self.feature_mtime_ns = current_mtime_ns
+            self._write_event({
+                "evt": "model_probability_refresh_skipped",
+                "reason": "after_no_new_entry_boundary",
+                "feature_csv": str(self.feature_csv_path),
+                "feature_mtime_ns": self.feature_mtime_ns,
+                "lead_hours": lead_hours,
+                **self._prediction_change_payload(),
+            })
+            return
+        try:
+            df = pd.read_csv(self.feature_csv_path)
+        except Exception as exc:
+            self.api_error_timestamps_s.append(now_s)
+            self._write_event({
+                "evt": "model_probability_refresh_error",
+                "feature_csv": str(self.feature_csv_path),
+                "err": repr(exc),
+            })
+            return
+        if len(df) != 1:
+            self.api_error_timestamps_s.append(now_s)
+            self._write_event({
+                "evt": "model_probability_refresh_error",
+                "feature_csv": str(self.feature_csv_path),
+                "err": f"feature_csv must contain exactly one row, got {len(df)}",
+            })
+            return
+        self.feature_mtime_ns = current_mtime_ns
+        self._apply_prediction_row(df, source="feature_csv_refresh", now_s=now_s, allow_selected_flip=True, emit=True)
+
+    def _apply_prediction_row(
+        self,
+        feature_row: pd.DataFrame,
+        *,
+        source: str,
+        allow_selected_flip: bool,
+        now_s: Optional[float] = None,
+        emit: bool,
+    ) -> None:
+        old_p_home = getattr(self, "p_home_model", None)
+        old_p_selected = getattr(self, "p_selected", None)
+        old_selected_team_id = getattr(self, "selected_team_id", "")
+        prediction = self.predictor.predict(feature_row)
+        new_p_home = float(prediction["p_home"][0])
+        new_p_away = 1.0 - new_p_home
+        model_selected_id = self.ctx.game.home_team_id if new_p_home >= new_p_away else self.ctx.game.away_team_id
+        model_selected_side = "home" if model_selected_id == self.ctx.game.home_team_id else "away"
+        selected_change_applied = False
+        selected_change_blocked = False
+
+        if old_selected_team_id and model_selected_id != old_selected_team_id:
+            if allow_selected_flip and not self._has_open_or_filled_exposure():
+                self.selected_team_id = model_selected_id
+                self.selected_side_label = model_selected_side
+                if hasattr(self, "mapping"):
+                    self.routes = build_equivalent_routes(self.mapping, self.selected_team_id)
+                    self.state = CanonicalExposureState(
+                        selected_team_id=self.selected_team_id,
+                        selected_team_name=self.routes[0].selected_team_name,
+                        opponent_team_id=self.routes[0].opponent_team_id,
+                        opponent_team_name=self.routes[0].opponent_team_name,
+                    )
+                    self.signal = SignalMemory()
+                selected_change_applied = True
+                self.model_probability_block_reason = None
+            else:
+                selected_change_blocked = True
+                self.model_probability_block_reason = "model_selected_team_changed_after_exposure"
+                if self.active_passive is not None:
+                    self._cancel_active_passive("model_selected_team_changed_after_exposure", now_s=now_s)
+        elif old_selected_team_id:
+            self.model_probability_block_reason = None
+        else:
+            self.selected_team_id = model_selected_id
+            self.selected_side_label = model_selected_side
+
+        self.feature_row = feature_row.copy()
+        self.prediction_result = prediction
+        self.p_home_model = new_p_home
+        self.p_home = new_p_home
+        self.p_away = new_p_away
+        if self.selected_team_id == self.ctx.game.home_team_id:
+            self.p_selected = self.p_home
+            self.selected_side_label = "home"
+        else:
+            self.p_selected = self.p_away
+            self.selected_side_label = "away"
+
+        lead_hours = _lead_hours(float(now_s), float(self.ctx.tipoff_ts_s)) if now_s is not None else None
+        if lead_hours is None or lead_hours >= self.cfg.no_new_entry_hours_before_tip:
+            self.latest_pre_t8_p_home = self.p_home_model
+            self.latest_pre_t8_p_selected = self.p_selected
+        self.model_prob_last_refresh_at_utc = utc_now_iso()
+        if source != "startup":
+            self.model_probability_update_count += 1
+
+        if emit:
+            self._write_event({
+                "evt": "model_probability_refresh",
+                "source": source,
+                "feature_csv": str(self.feature_csv_path) if self.feature_csv_path else None,
+                "feature_mtime_ns": self.feature_mtime_ns,
+                "lead_hours": lead_hours,
+                "old_p_home": old_p_home,
+                "new_p_home": self.p_home_model,
+                "p_home": self.p_home,
+                "p_away": self.p_away,
+                "p_selected": self.p_selected,
+                "p_raw": _prediction_value(self.prediction_result, "p_raw"),
+                "p_elo": _prediction_value(self.prediction_result, "p_elo"),
+                "old_p_selected": old_p_selected,
+                "new_p_selected": self.p_selected,
+                "old_selected_team_id": old_selected_team_id,
+                "model_selected_team_id": model_selected_id,
+                "selected_team_id": self.selected_team_id,
+                "selected_team_change_applied": selected_change_applied,
+                "selected_team_change_blocked": selected_change_blocked,
+                "model_probability_block_reason": self.model_probability_block_reason,
+                **self._prediction_change_payload(),
+            })
+
+    def _has_open_or_filled_exposure(self) -> bool:
+        return (
+            self.active_passive is not None
+            or self.state.filled_cost_dollars > 0.0
+            or self.state.reserved_cost_dollars > 0.0
+            or any(int(v) > 0 for v in self.state.filled_contracts_by_route.values())
+        )
+
+    def _prediction_change_payload(self) -> dict[str, Any]:
+        latest_home = self.latest_pre_t8_p_home if self.latest_pre_t8_p_home is not None else self.p_home_model
+        latest_selected = (
+            self.latest_pre_t8_p_selected
+            if self.latest_pre_t8_p_selected is not None
+            else self.p_selected
+        )
+        initial_home = self.initial_p_home_model if self.initial_p_home_model is not None else self.p_home_model
+        initial_selected = self.initial_p_selected if self.initial_p_selected is not None else self.p_selected
+        delta_home = latest_home - initial_home
+        delta_selected = latest_selected - initial_selected
+        return {
+            "model_prob_t20_home": initial_home,
+            "model_prob_latest_pre_t8_home": latest_home,
+            "model_prob_change_t20_to_t8_home": delta_home,
+            "model_prob_t20_selected": initial_selected,
+            "model_prob_latest_pre_t8_selected": latest_selected,
+            "model_prob_change_t20_to_t8_selected": delta_selected,
+            "model_prob_changed_t20_to_t8": abs(delta_selected) >= 0.0005,
+            "model_prob_last_refresh_at_utc": self.model_prob_last_refresh_at_utc,
+            "model_probability_update_count": self.model_probability_update_count,
+            "model_probability_block_reason": self.model_probability_block_reason,
+        }
 
     def _control_plane_context(self) -> dict[str, Any]:
         lead_hours = (float(self.ctx.tipoff_ts_s) - time.time()) / 3600.0
@@ -752,6 +940,7 @@ class RouteEntryLoop:
             "operator_trade_allowed": self.control_decision.trade_allowed,
             "operator_reason": self.control_decision.reason,
             "operator_risk_mode": self.control_decision.risk_mode,
+            **self._prediction_change_payload(),
             **self.control_decision.to_log_payload(),
             "position_mismatch_dollars": self.position_mismatch_dollars,
             "target_position_dollars": plan.target_position_dollars,
@@ -805,6 +994,7 @@ class RouteEntryLoop:
             "operator_trade_allowed": self.control_decision.trade_allowed,
             "operator_reason": self.control_decision.reason,
             "operator_risk_mode": self.control_decision.risk_mode,
+            **self._prediction_change_payload(),
             **self.control_decision.to_log_payload(),
             "position_mismatch_dollars": self.position_mismatch_dollars,
             "target_position_dollars": 0.0,
@@ -1104,6 +1294,7 @@ class RouteEntryLoop:
             "operator_trade_allowed": self.control_decision.trade_allowed,
             "operator_reason": self.control_decision.reason,
             "operator_risk_mode": self.control_decision.risk_mode,
+            **self._prediction_change_payload(),
             **self.control_decision.to_log_payload(),
             "position_mismatch_dollars": self.position_mismatch_dollars,
             "target_position_dollars": 0.0,
@@ -1299,6 +1490,9 @@ class RouteEntryLoop:
             "startup_open_order_recovery",
             "startup_open_order_recovery_error",
             "position_reconciliation_error",
+            "model_probability_refresh",
+            "model_probability_refresh_skipped",
+            "model_probability_refresh_error",
             "portfolio_sizing",
             "portfolio_sizing_error",
             "signal_state",
@@ -1405,6 +1599,19 @@ def _prediction_value(result: Mapping[str, Any], key: str) -> Optional[float]:
     except Exception:
         return None
     return out if math.isfinite(out) else None
+
+
+def _path_mtime_ns(path: Optional[Path]) -> Optional[int]:
+    if path is None:
+        return None
+    try:
+        return int(path.stat().st_mtime_ns)
+    except OSError:
+        return None
+
+
+def _lead_hours(now_s: float, tipoff_ts_s: float) -> float:
+    return (tipoff_ts_s - now_s) / 3600.0
 
 
 def _feature_row_payload(df: pd.DataFrame) -> Dict[str, Any]:

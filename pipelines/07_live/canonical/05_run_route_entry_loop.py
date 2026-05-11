@@ -55,6 +55,8 @@ def main() -> None:
     ap.add_argument("--tipoff-ts", type=int, required=True)
     ap.add_argument("--feature-csv", required=True,
                     help="Single-row CSV in gold-table schema for this game")
+    ap.add_argument("--feature-reload-interval-s", type=float, default=60.0,
+                    help="Minimum seconds between checks for refreshed live feature/probability CSV.")
     ap.add_argument("--train-csv", default=None, help=argparse.SUPPRESS)
     ap.add_argument(
         "--sizing-bankroll-override",
@@ -206,6 +208,7 @@ def main() -> None:
         game=game,
         tipoff_ts_s=args.tipoff_ts,
         feature_row=feat_df,
+        feature_csv_path=feature_csv,
         team_name_map_path=Path(args.team_name_map),
         series_tickers=tuple(args.series_ticker or ["KXWNBAGAME", "KXWNBAH"]),
         market_discovery_limit=args.market_discovery_limit,
@@ -237,6 +240,7 @@ def main() -> None:
                 "away_team_name": args.away_team_name,
                 "tipoff_ts_s": args.tipoff_ts,
                 "feature_csv": str(feature_csv),
+                "feature_reload_interval_s": args.feature_reload_interval_s,
                 "train_csv": str(PRODUCTION_TRAIN_CSV),
                 "completed_games_csv": args.completed_games_csv,
                 "team_name_map": args.team_name_map,
@@ -280,6 +284,7 @@ def main() -> None:
         operator_game_override_path=Path(args.operator_override_path) if args.operator_override_path else None,
         control_plane_mode=args.control_plane_mode,
         control_plane_bot_id=args.control_plane_bot_id,
+        feature_reload_interval_s=args.feature_reload_interval_s,
         position_reconcile_interval_s=args.position_reconcile_interval_s,
         startup_reconciliation=not args.skip_startup_reconciliation,
         ledger=ledger,

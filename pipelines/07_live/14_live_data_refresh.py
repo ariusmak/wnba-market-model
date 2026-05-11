@@ -50,6 +50,7 @@ RUN_ROOT = REPO_ROOT / "data" / "runs" / "live_refresh"
 DAEMON_RUN_ROOT = REPO_ROOT / "data" / "runs" / "live_daemon"
 STATE_PATH = RUN_ROOT / "scheduler_state.json"
 DEFAULT_SERIES = ("KXWNBAGAME", "KXWNBAH")
+LIVE_PACKET_JOB_KINDS = {"market_t20", "injury_live_update"}
 
 
 @dataclass(frozen=True)
@@ -83,9 +84,12 @@ def main() -> None:
     ap.add_argument("--access-level", default="trial")
     ap.add_argument(
         "--mode",
-        choices=["due", "settled", "market"],
+        choices=["due", "settled", "market", "injury"],
         default="due",
-        help="due=run any scheduled job now due; settled=force settled-history refresh; market=check T-20 due games only.",
+        help=(
+            "due=run any scheduled job now due; settled=force settled-history refresh; "
+            "market=check T-20 due games only; injury=hourly injury refresh plus live pre-T8 reprices."
+        ),
     )
     ap.add_argument("--start-year", type=int, default=2015)
     ap.add_argument("--today", default=None, help="Validation date override, YYYY-MM-DD.")
@@ -220,7 +224,7 @@ def main() -> None:
         if err.get("job_key")
     }
     runnable_jobs = list(jobs)
-    should_refresh = any(job.kind in {"settled_history", "market_t20"} for job in runnable_jobs)
+    should_refresh = any(job.kind in {"settled_history", "market_t20", "injury_poll"} for job in runnable_jobs)
     command_results: list[dict[str, Any]] = []
     command_success = True
 
@@ -231,18 +235,28 @@ def main() -> None:
     )
 
     if should_refresh:
-        command_results = run_settled_refresh(
-            year=args.year,
-            access_level=args.access_level,
-            start_year=args.start_year,
-            today=args.today or now.astimezone(timezone.utc).date().isoformat(),
-            run_dir=run_dir,
-            logger=logger,
-            dry_run=args.dry_run,
-        )
+        if args.mode == "injury":
+            command_results = run_injury_refresh(
+                year=args.year,
+                access_level=args.access_level,
+                today=args.today or now.astimezone(timezone.utc).date().isoformat(),
+                run_dir=run_dir,
+                logger=logger,
+                dry_run=args.dry_run,
+            )
+        else:
+            command_results = run_settled_refresh(
+                year=args.year,
+                access_level=args.access_level,
+                start_year=args.start_year,
+                today=args.today or now.astimezone(timezone.utc).date().isoformat(),
+                run_dir=run_dir,
+                logger=logger,
+                dry_run=args.dry_run,
+            )
         command_success = all(r["returncode"] == 0 for r in command_results)
         if command_success:
-            packet_results = run_t20_prediction_packets(
+            packet_results = run_live_prediction_packets(
                 year=args.year,
                 jobs=runnable_jobs,
                 asof=now,
@@ -279,7 +293,7 @@ def main() -> None:
         "live_prediction_packets": [
             str(REPO_ROOT / "data" / "runs" / "live_games" / str((job.game or {}).get("game_id")) / "prediction_packet.json")
             for job in runnable_jobs
-            if job.kind == "market_t20" and job.game
+            if job.kind in LIVE_PACKET_JOB_KINDS and job.game
         ],
     }
     write_json(run_dir / "promoted_outputs.json", promoted_outputs)
@@ -351,6 +365,29 @@ def determine_due_jobs(
                 state=state,
                 force=force and mode == "market",
                 window_minutes=t20_window_minutes,
+                markets=markets,
+                team_name_map=team_name_map,
+                skip_mapping=skip_market_mapping,
+                logger=logger,
+            )
+        )
+
+    if mode == "injury":
+        jobs.append(
+            DueJob(
+                key=f"injury_poll:{now.astimezone(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
+                kind="injury_poll",
+                reason="hourly_injury_refresh",
+            )
+        )
+        games = load_latest_schedule_games(year)
+        team_name_map = {}
+        if not skip_market_mapping and team_name_map_path.exists():
+            team_name_map = load_team_name_map(str(team_name_map_path))
+        jobs.extend(
+            injury_live_update_jobs(
+                games=games,
+                now=now,
                 markets=markets,
                 team_name_map=team_name_map,
                 skip_mapping=skip_market_mapping,
@@ -459,6 +496,75 @@ def market_t20_due_jobs(
     return jobs
 
 
+def injury_live_update_jobs(
+    *,
+    games: list[dict[str, Any]],
+    now: datetime,
+    markets: list[dict[str, Any]],
+    team_name_map: dict[str, str],
+    skip_mapping: bool,
+    logger: JsonlLogger,
+) -> list[DueJob]:
+    jobs: list[DueJob] = []
+    now_utc = now.astimezone(timezone.utc)
+    for raw in games:
+        scheduled_raw = raw.get("scheduled")
+        game_id = raw.get("id")
+        if not scheduled_raw or not game_id:
+            continue
+        scheduled = parse_datetime(str(scheduled_raw)).astimezone(timezone.utc)
+        if not (scheduled - timedelta(hours=20) <= now_utc <= scheduled - timedelta(hours=8)):
+            continue
+
+        game_ref = game_ref_from_schedule(raw)
+        mapping_payload: dict[str, Any] | None = None
+        if not skip_mapping:
+            try:
+                mapping = map_game_to_kalshi_markets(
+                    game_ref,
+                    markets,
+                    require_open=True,
+                    team_name_to_id=team_name_map,
+                )
+                mapping_payload = {
+                    "confirmed": mapping.confirmed,
+                    "event_ticker": mapping.event_ticker,
+                    "candidate_count": mapping.candidate_count,
+                    "diagnostics": mapping.diagnostics[:12],
+                    "home_market": getattr(mapping.home_market, "ticker", ""),
+                    "away_market": getattr(mapping.away_market, "ticker", ""),
+                    "complement_market_confirmed": mapping.complement_market_confirmed,
+                }
+                if not mapping.confirmed:
+                    continue
+            except Exception as exc:
+                logger.write("injury_live_update_mapping_failed", game_id=game_id, error=str(exc))
+                continue
+        elif not markets:
+            continue
+
+        jobs.append(
+            DueJob(
+                key=f"injury_live_update:{game_id}:{now_utc.strftime('%Y%m%dT%H%M%SZ')}",
+                kind="injury_live_update",
+                reason="injury_refresh_pre_t8",
+                scheduled_for_et=(scheduled - timedelta(hours=8)).astimezone(EASTERN).isoformat(),
+                game={
+                    "game_id": game_id,
+                    "scheduled_utc": scheduled.isoformat(),
+                    "t20_target_utc": (scheduled - timedelta(hours=20)).isoformat(),
+                    "t8_cutoff_utc": (scheduled - timedelta(hours=8)).isoformat(),
+                    "home_team_id": game_ref.home_team_id,
+                    "away_team_id": game_ref.away_team_id,
+                    "home_team_name": game_ref.home_team_name,
+                    "away_team_name": game_ref.away_team_name,
+                },
+                mapping=mapping_payload,
+            )
+        )
+    return jobs
+
+
 def evaluate_t20_market_preflight(
     jobs: list[DueJob],
     *,
@@ -471,7 +577,7 @@ def evaluate_t20_market_preflight(
     snapshot_skipped = bool(market_snapshot.get("skipped"))
 
     for job in jobs:
-        if job.kind != "market_t20":
+        if job.kind not in LIVE_PACKET_JOB_KINDS:
             continue
 
         if dry_run:
@@ -495,7 +601,7 @@ def evaluate_t20_market_preflight(
             issues.append({
                 "job_key": job.key,
                 "code": "kalshi_snapshot_skipped",
-                "message": "T-20 market jobs require an active/open WNBA moneyline Kalshi snapshot.",
+                "message": "Live prediction jobs require an active/open WNBA moneyline Kalshi snapshot.",
             })
             continue
 
@@ -503,7 +609,7 @@ def evaluate_t20_market_preflight(
             issues.append({
                 "job_key": job.key,
                 "code": "market_mapping_not_checked",
-                "message": "T-20 market job had no Kalshi mapping payload.",
+                "message": "Live prediction job had no Kalshi mapping payload.",
             })
             continue
 
@@ -511,7 +617,7 @@ def evaluate_t20_market_preflight(
             issues.append({
                 "job_key": job.key,
                 "code": "market_mapping_not_confirmed",
-                "message": "T-20 market job requires confirmed active/open WNBA moneyline mapping.",
+                "message": "Live prediction job requires confirmed active/open WNBA moneyline mapping.",
                 "mapping": job.mapping,
             })
             continue
@@ -520,7 +626,7 @@ def evaluate_t20_market_preflight(
             issues.append({
                 "job_key": job.key,
                 "code": "complement_market_not_confirmed",
-                "message": "T-20 market job requires two complementary team-wins contracts.",
+                "message": "Live prediction job requires two complementary team-wins contracts.",
                 "mapping": job.mapping,
             })
 
@@ -592,7 +698,48 @@ def run_settled_refresh(
     return results
 
 
-def run_t20_prediction_packets(
+def run_injury_refresh(
+    *,
+    year: int,
+    access_level: str,
+    today: str,
+    run_dir: Path,
+    logger: JsonlLogger,
+    dry_run: bool,
+) -> list[dict[str, Any]]:
+    commands = [
+        [
+            sys.executable,
+            "pipelines/01_ingestion/10_backfill_daily_injuries_year.py",
+            "--year",
+            str(year),
+            "--access-level",
+            access_level,
+            "--refresh-lookback-days",
+            "2",
+        ],
+        [sys.executable, "pipelines/02_parsing/11_extract_injury_events_year.py", "--year", str(year)],
+        [sys.executable, "pipelines/02_parsing/15_build_augmented_injury_events_year.py", "--year", str(year)],
+        [sys.executable, "pipelines/02_parsing/16_build_injury_episodes_year.py", "--year", str(year)],
+        [
+            sys.executable,
+            "pipelines/03_features/21_build_player_state_history_year.py",
+            "--year",
+            str(year),
+            "--through-date",
+            today,
+        ],
+    ]
+    results: list[dict[str, Any]] = []
+    for idx, cmd in enumerate(commands, start=1):
+        results.append(run_command(idx, cmd, run_dir=run_dir, logger=logger, dry_run=dry_run))
+        if results[-1]["returncode"] != 0:
+            break
+    write_json(run_dir / "command_results.json", {"commands": results})
+    return results
+
+
+def run_live_prediction_packets(
     *,
     year: int,
     jobs: list[DueJob],
@@ -605,7 +752,7 @@ def run_t20_prediction_packets(
     start_idx: int,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
-    packet_jobs = [job for job in jobs if job.kind == "market_t20" and job.game]
+    packet_jobs = [job for job in jobs if job.kind in LIVE_PACKET_JOB_KINDS and job.game]
     for offset, job in enumerate(packet_jobs):
         game_id = str((job.game or {}).get("game_id") or "")
         if not game_id:

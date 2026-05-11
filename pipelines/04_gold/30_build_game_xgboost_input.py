@@ -25,6 +25,7 @@ Column order (per spec section 9):
   6. schedule/travel block (home, away)
 """
 import argparse
+import json
 import math
 from pathlib import Path
 import sys
@@ -128,6 +129,53 @@ def load_home_win(year: int) -> pd.DataFrame:
     return df[["game_id", "is_playoff", "home_win"]]
 
 
+def load_pre_t8_live_feature_rows(year: int) -> dict[str, pd.Series]:
+    """Return captured live feature rows whose packet as-of was no later than T-8.
+
+    These rows are the production settled-history truth for games that went
+    through the live stack, because they preserve the latest injury/player
+    conditions available before the no-new-entry boundary. Older games without
+    captured live packets fall back to the historical silver_plus rebuild.
+    """
+    out: dict[str, pd.Series] = {}
+    root = Path("data/runs/live_games")
+    if not root.exists():
+        return out
+    for packet_path in root.glob("*/prediction_packet.json"):
+        try:
+            packet = json.loads(packet_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if packet.get("schema_version") != "live_prediction_packet_v1":
+            continue
+        if int(str(packet.get("scheduled_utc") or "")[:4] or 0) != year:
+            continue
+        game_id = str(packet.get("game_id") or packet_path.parent.name)
+        scheduled = pd.to_datetime(packet.get("scheduled_utc"), utc=True, errors="coerce")
+        source_report = packet.get("source_report") if isinstance(packet.get("source_report"), dict) else {}
+        asof = pd.to_datetime(source_report.get("asof_ts_utc"), utc=True, errors="coerce")
+        if pd.isna(scheduled) or pd.isna(asof) or asof > scheduled - pd.Timedelta(hours=8):
+            continue
+        packet_feature_row = packet.get("feature_row")
+        if isinstance(packet_feature_row, dict) and all(col in packet_feature_row for col in GOLD_MODEL_INPUT_COLS):
+            row = pd.Series(packet_feature_row)
+        else:
+            feature_csv = Path(str(packet.get("feature_csv") or ""))
+            if not feature_csv.exists():
+                continue
+            try:
+                df = pd.read_csv(feature_csv)
+            except Exception:
+                continue
+            if len(df) != 1 or any(col not in df.columns for col in GOLD_MODEL_INPUT_COLS):
+                continue
+            row = df.iloc[0].copy()
+        if str(row.get("game_id") or "") != game_id:
+            continue
+        out[game_id] = row
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Player slot builder
 # ---------------------------------------------------------------------------
@@ -171,6 +219,7 @@ def main(year: int):
     sched = load_schedule(year)
     players = load_players(year)
     outcomes = load_home_win(year)
+    pre_t8_live_rows = load_pre_t8_live_feature_rows(year)
 
     # Step 1: pivot Elo to one row per game
     home_elo = elo[elo["is_home"] == 1].set_index("game_id")
@@ -257,6 +306,15 @@ def main(year: int):
         for f in SCHEDULE_FEATURES:
             row[f"home_{f}"] = get_sched(home_tid, f)
             row[f"away_{f}"] = get_sched(away_tid, f)
+
+        if gid in pre_t8_live_rows:
+            live_row = pre_t8_live_rows[gid]
+            row.update({
+                col: (None if pd.isna(live_row[col]) else live_row[col])
+                for col in GOLD_MODEL_INPUT_COLS
+                if col != "home_win"
+            })
+            row["home_win"] = int(outcome["home_win"]) if outcome is not None and pd.notna(outcome["home_win"]) else None
 
         rows.append(row)
 

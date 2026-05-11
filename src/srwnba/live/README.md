@@ -22,3 +22,10 @@ to `local-only`, can be rehearsed with `supabase-shadow`, and should only use
 `supabase-live` once Supabase secrets, dashboard controls, and worker
 acknowledgment are verified. Local JSON controls remain the emergency brake in
 all modes.
+
+Live feature rows are mutable until the T-8 no-new-entry boundary. The daemon's
+hourly injury refresh rewrites `data/live_features/<game_id>.csv` for mapped
+open games between T-20 and T-8, and the route loop reloads that file so the
+latest probability becomes the planning truth. If the model-selected side flips
+after exposure exists, the loop blocks new entry rather than creating offsetting
+exposure.
