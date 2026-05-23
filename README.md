@@ -88,32 +88,17 @@ On the common subset (210 games with all four sources), Kalshi has the lower log
 
 When the model and Kalshi disagree on the game direction (51 games), the model is correct **65%** of the time. This is a high-signal slice for trade selection, but it is still a small 2025-only sample.
 
-### Result Audit Trail
-
-The main claims in this README are backed by regenerated tables and figures in [`outputs/`](outputs/), with source notebooks in [`notebooks/analysis/`](notebooks/analysis/) and [`notebooks/output generation/`](notebooks/output%20generation/):
-
-| Claim area | Primary table(s) | Primary notebook(s) |
-|------------|------------------|---------------------|
-| Forecasting benchmark | [`forecast_model_performance_summary.csv`](outputs/forecast_model_performance_summary.csv), [`forecast_per_fold_performance_table.csv`](outputs/forecast_per_fold_performance_table.csv) | [`forecasting_results.ipynb`](notebooks/analysis/forecasting_results.ipynb), [`forecasting.ipynb`](notebooks/output%20generation/forecasting.ipynb) |
-| Feature ablations / robustness | [`feature_block_ablation_summary.csv`](outputs/feature_block_ablation_summary.csv), [`training_windows_logloss_summary.csv`](outputs/training_windows_logloss_summary.csv) | [`ablations.ipynb`](notebooks/analysis/ablations.ipynb), [`training_windows.ipynb`](notebooks/analysis/training_windows.ipynb) |
-| Market comparison | [`market_model_performance_summary.csv`](outputs/market_model_performance_summary.csv), [`market_directional_disagreement_table.csv`](outputs/market_directional_disagreement_table.csv) | [`market_comparison.ipynb`](notebooks/output%20generation/market_comparison.ipynb) |
-| Trading grid / return decomposition | [`trade_half_kelly_best_config_table.csv`](outputs/trade_half_kelly_best_config_table.csv), [`trade_return_decomposition_table.csv`](outputs/trade_return_decomposition_table.csv) | [`trading_results2.ipynb`](notebooks/analysis/trading_results2.ipynb), [`return_decomposition.ipynb`](notebooks/output%20generation/return_decomposition.ipynb) |
-| Liquidity and execution sensitivity | [`liq_execution_summary_table.csv`](outputs/liq_execution_summary_table.csv), [`trade_volume_share_summary_table.csv`](outputs/trade_volume_share_summary_table.csv), [`trade_cutoff_sweep_summary.csv`](outputs/trade_cutoff_sweep_summary.csv) | [`return_investigation.ipynb`](notebooks/analysis/return_investigation.ipynb), [`liquidity.ipynb`](notebooks/output%20generation/liquidity.ipynb) |
-| Statistical significance | [`sig_bootstrap_summary_table.csv`](outputs/sig_bootstrap_summary_table.csv) | [`significance.ipynb`](notebooks/output%20generation/significance.ipynb) |
-
----
-
 ## Analysis & Interpretation
 
 ### Elo captures most of the signal
 
-The most striking result in the forecasting table is that XGBoost *without* Elo — using only player, form, style, and schedule features — achieves a dev log loss of 0.623, within 0.021 of the Elo-only baseline (0.602). These two models use completely different data sources and methodologies: Elo sees only game outcomes and margin of victory, while the features-only XGBoost sees player availability, box-score tendencies, rest patterns, and team style. The fact that they converge to similar performance suggests that Elo already encodes much of what matters, team strength is the dominant signal, and contextual features provide only a marginal correction.
+The most striking result in the forecasting table is that XGBoost *without* Elo, using only player, form, style, and schedule features, achieves a dev log loss of 0.623, within 0.021 of the Elo-only baseline (0.602). These two models use completely different data sources and methodologies: Elo sees only game outcomes and margin of victory, while the features-only XGBoost sees player availability, box-score tendencies, rest patterns, and team style. The fact that they converge to similar performance suggests that Elo already encodes much of what matters, team strength is the dominant signal, and contextual features provide only a marginal correction.
 
 This is further supported by feature importance. When XGBoost has no Elo base margin, it learns sensible structure: net rating EWMA and top-player quality (`p1_q`, `p2_q`) dominate importance, essentially reconstructing a team-strength signal from available data. When XGBoost *does* have Elo as a base margin, the remaining feature importance is scattered across low-level player slots (e.g., `home_p2_played_last_game`, `away_p5_days_since_last_played`) with no single dominant correction signal. The logistic regression tells the same story: `base_margin` has a coefficient of 0.92 (nearly 1.0, meaning Elo is passed through almost unchanged), and the largest feature coefficients are schedule and player availability variables with modest magnitude.
 
 ### Small log loss improvements, large trading returns
 
-The most counterintuitive result is the gap between forecasting and trading performance. On the 2025 holdout, the full model's log loss improvement over Elo is modest (0.6121 vs 0.6151 — just 0.003 points), yet it produces **1,062% half-Kelly return** vs Elo's **417%** — a 2.5x difference in terminal wealth from a nearly negligible calibration improvement.
+The most counterintuitive result is the gap between forecasting and trading performance. On the 2025 holdout, the full model's log loss improvement over Elo is modest (0.6121 vs 0.6151), yet it produces **1,062% half-Kelly return** vs Elo's **417%**, a 2.5x difference in terminal wealth from a nearly negligible calibration improvement.
 
 **The entire return gap is driven by differential game selection, not by better sizing or higher accuracy on the same games.** A direct head-to-head analysis ([`trading_results2.ipynb`](notebooks/analysis/trading_results2.ipynb) §14) under identical entry rules (edge ≥ 0.05, norm_edge ≥ 0.25, half-life entry) gives:
 
@@ -128,11 +113,11 @@ The interpretation is sharp:
 
 1. **On shared games, the full model is actually slightly worse.** Both models pick the same side on all 111 shared games, with nearly identical Kelly fractions (mean 0.211 vs 0.216) and identical hit rates (35.1%). The full model's mean edge on these games is *lower* in normalized terms (0.494 vs 0.555). Compounding noise leaves it −$1 while Elo books +$210 on the same positions. So the FM does not win by "betting bigger on winners" or "tail accuracy in high-edge games."
 
-2. **The full model's edge is knowing which additional games to trade.** Elo uniquely triggers on 44 games that hit only 31.8% — it overtrades games where its flat team-strength prior sees edge that isn't there. The full model's player-availability, recent-form, and style features *suppress* these false-edge trades while *surfacing* 23 new games that Elo misses. Those 23 games hit **65.2%** and produce +$1,063 — essentially all of the full model's profit.
+2. **The full model's edge is knowing which additional games to trade.** Elo uniquely triggers on 44 games that hit only 31.8%, suggesting it overtrades games where its flat team-strength prior sees edge that isn't there. The full model's player-availability, recent-form, and style features *suppress* these false-edge trades while *surfacing* 23 new games that Elo misses. Those 23 games hit **65.2%** and produce +$1,063, essentially all of the full model's profit.
 
 3. **Compounding amplifies the selection advantage.** Half-Kelly sizes proportionally to current bankroll. Because the 23 FM-exclusive winners come concentrated in mid-to-late season (when the bankroll is already inflated from earlier trades), their dollar contribution is much larger than a fixed-$1 simulation would show. The same 23 games under fixed $1 sizing would produce only +$15 of profit.
 
-**In short:** the full model's feature set does not improve probability accuracy on games both models want to trade. It improves *trade selection* — suppressing overconfident Elo bets on contextually unfavorable matchups and surfacing high-conviction games Elo's team-strength-only view cannot distinguish. The thin 0.003-log-loss gap reflects the fact that this selection advantage is localized to ~20% of the season; average calibration across all 310 games barely moves.
+**In short:** the full model's feature set does not improve probability accuracy on games both models want to trade. It improves *trade selection* by suppressing overconfident Elo bets on contextually unfavorable matchups and surfacing high-conviction games Elo's team-strength-only view cannot distinguish. The thin 0.003-log-loss gap reflects the fact that this selection advantage is localized to ~20% of the season; average calibration across all 310 games barely moves.
 
 ### Realistic execution: liquidity and bankroll sensitivity
 
@@ -166,6 +151,20 @@ The meaningful signal across the table is the trajectory: **Kelly % returns are 
 ### The honest uncertainty
 
 Despite the compelling return numbers, the bootstrap significance test gives P(Full Model > Elo) = 0.652 — suggestive but far from conclusive. A single season of ~130–155 trades is simply insufficient to statistically distinguish two models that both have positive edge. This is a structural limitation of WNBA market size, not a modeling failure.
+
+### Result Audit Trail
+
+The main claims in this README are backed by regenerated tables and figures in [`outputs/`](outputs/), with source notebooks in [`notebooks/analysis/`](notebooks/analysis/) and [`notebooks/output generation/`](notebooks/output%20generation/):
+
+| Claim area | Primary table(s) | Primary notebook(s) |
+|------------|------------------|---------------------|
+| Forecasting benchmark | [`forecast_model_performance_summary.csv`](outputs/forecast_model_performance_summary.csv), [`forecast_per_fold_performance_table.csv`](outputs/forecast_per_fold_performance_table.csv) | [`forecasting_results.ipynb`](notebooks/analysis/forecasting_results.ipynb), [`forecasting.ipynb`](notebooks/output%20generation/forecasting.ipynb) |
+| Feature ablations / robustness | [`feature_block_ablation_summary.csv`](outputs/feature_block_ablation_summary.csv), [`training_windows_logloss_summary.csv`](outputs/training_windows_logloss_summary.csv) | [`ablations.ipynb`](notebooks/analysis/ablations.ipynb), [`training_windows.ipynb`](notebooks/analysis/training_windows.ipynb) |
+| Market comparison | [`market_model_performance_summary.csv`](outputs/market_model_performance_summary.csv), [`market_directional_disagreement_table.csv`](outputs/market_directional_disagreement_table.csv) | [`market_comparison.ipynb`](notebooks/output%20generation/market_comparison.ipynb) |
+| Trading grid / return decomposition | [`trade_half_kelly_best_config_table.csv`](outputs/trade_half_kelly_best_config_table.csv), [`trade_return_decomposition_table.csv`](outputs/trade_return_decomposition_table.csv) | [`trading_results2.ipynb`](notebooks/analysis/trading_results2.ipynb), [`return_decomposition.ipynb`](notebooks/output%20generation/return_decomposition.ipynb) |
+| Liquidity and execution sensitivity | [`liq_execution_summary_table.csv`](outputs/liq_execution_summary_table.csv), [`trade_volume_share_summary_table.csv`](outputs/trade_volume_share_summary_table.csv), [`trade_cutoff_sweep_summary.csv`](outputs/trade_cutoff_sweep_summary.csv) | [`return_investigation.ipynb`](notebooks/analysis/return_investigation.ipynb), [`liquidity.ipynb`](notebooks/output%20generation/liquidity.ipynb) |
+| Statistical significance | [`sig_bootstrap_summary_table.csv`](outputs/sig_bootstrap_summary_table.csv) | [`significance.ipynb`](notebooks/output%20generation/significance.ipynb) |
+
 
 ### Scope and limitations
 
