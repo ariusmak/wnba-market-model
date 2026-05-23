@@ -1,0 +1,11 @@
+rank,xgb_no_elo_feature,xgb_no_elo_family,xgb_no_elo_gain_norm,xgb_with_elo_feature,xgb_with_elo_family,xgb_with_elo_gain_norm
+1,home_net_rtg_ewma_pre,Team strength,0.0208,away_p5_played_last_game_pre,Availability / injury,0.0146
+2,away_net_rtg_ewma_pre,Team strength,0.0195,home_p2_played_last_game_pre,Availability / injury,0.013
+3,home_p1_q_pre,Team strength,0.0191,away_p2_played_last_game_pre,Availability / injury,0.0128
+4,away_p2_q_pre,Team strength,0.0158,away_p5_days_since_last_played_pre,Availability / injury,0.0125
+5,away_p1_q_pre,Team strength,0.0152,away_p5_days_since_first_report_pre,Availability / injury,0.0124
+6,away_p7_days_since_last_played_pre,Availability / injury,0.0127,away_days_rest_pre,Rest / schedule / travel,0.0124
+7,away_p5_played_last_game_pre,Availability / injury,0.0126,home_p6_played_last_game_pre,Availability / injury,0.0123
+8,away_p2_played_last_game_pre,Availability / injury,0.0115,away_p2_q_pre,Team strength,0.0121
+9,home_p5_injury_present_flag_pre,Availability / injury,0.0115,home_p1_q_pre,Team strength,0.0119
+10,home_p2_q_pre,Team strength,0.0105,away_p6_days_since_last_dnp_pre,Availability / injury,0.0119

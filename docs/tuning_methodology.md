@@ -116,14 +116,14 @@ Fine-tuned remaining feature-engineering parameters with Stage 1 winners locked 
 
 With all feature parameters locked, XGBoost hyperparameters were tuned. Preliminary grid searches explored a wide parameter space and identified a promising region (depth 4–8, min_child_weight 2–3, colsample_bytree ~0.6, moderate regularization). These preliminary results informed the design of the final grid search, which was conducted with corrected walk-forward CV methodology.
 
-**Final grid (1,296 configs):**
+**Final main grid (2,592 configs):**
 
 | Parameter | Values |
 |-----------|--------|
-| max_depth | 4, 5, 6, 7, 8 |
-| min_child_weight | 2, 3 |
+| max_depth | 3, 4, 5, 6, 7, 8 |
+| min_child_weight | 1, 2, 3, 6 |
 | gamma | 0.0, 0.1, 0.5, 1.0 |
-| colsample_bytree | 0.6 |
+| colsample_bytree | 0.6, 0.8, 1.0 |
 | reg_lambda | 0.5, 1.0, 2.0 |
 | learning_rate | 0.01, 0.02, 0.03 |
 
@@ -163,6 +163,8 @@ The rank-1 configuration (lr=0.03) had `min_best_round=2` across the 5 CV folds,
 
 The log-loss difference between rank 1 and rank 2 is only 0.00038 (0.59749 vs 0.59787), well within noise. Stability was prioritized over marginal mean performance.
 
+After the main grid, the notebook also runs a small "very aggressive hyperparams" diagnostic grid (48 configs) outside the selected region. That sweep was used as a sanity check and did not replace the main-grid rank-2 selection above.
+
 See: `notebooks/xgb_tuning/XGB_tuning3.ipynb`, `notebooks/xgb_tuning/complexity_curve.ipynb`
 
 ---
@@ -183,7 +185,7 @@ See: `notebooks/xgb_tuning/XGB_tuning3.ipynb`, `notebooks/xgb_tuning/complexity_
 | Features | h_team | 7 |
 | XGBoost | max_depth | 6 |
 | XGBoost | min_child_weight | 3 |
-| XGBoost | gamma | 1.0 |
+| XGBoost | gamma | 0.1 |
 | XGBoost | colsample_bytree | 0.6 |
 | XGBoost | subsample | 0.8 |
 | XGBoost | reg_lambda | 1.0 |

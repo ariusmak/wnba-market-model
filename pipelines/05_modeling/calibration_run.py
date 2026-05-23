@@ -12,22 +12,22 @@ import matplotlib.pyplot as plt
 warnings.filterwarnings('ignore')
 
 PROJECT_ROOT = Path('../..').resolve()
-GOLD_DIR = PROJECT_ROOT / 'data' / 'gold' / 'stage1' / 'hM7_Linj14_tau150_hT7'
+GOLD_DIR = PROJECT_ROOT / 'data' / 'gold'
 OUT_DIR  = PROJECT_ROOT / 'data' / 'calibration'
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# Winner hyperparams from tuning3 gridsearch (honest nested CV)
+# Canonical Stage 3 rank-2 hyperparams from tuning3 main grid.
 XGB_PARAMS = {
     'objective':        'binary:logistic',
     'eval_metric':      'logloss',
     'max_depth':        6,
-    'min_child_weight': 2,
-    'subsample':        0.9,
-    'colsample_bytree': 0.8,
-    'reg_lambda':       0.5,
+    'min_child_weight': 3,
+    'subsample':        0.8,
+    'colsample_bytree': 0.6,
+    'reg_lambda':       1.0,
     'reg_alpha':        0.0,
-    'gamma':            0.5,
-    'learning_rate':    0.03,
+    'gamma':            0.1,
+    'learning_rate':    0.02,
     'seed':             42,
     'nthread':         -1,
 }
@@ -102,11 +102,11 @@ def load_year(year):
 
 
 def cold_start_mask(df):
-    """True for rows to KEEP — drop rows where home p1 m_ewma_pre == 0 (cold start)."""
+    """True for rows to KEEP - drop rows where either p1 m_ewma_pre == 0."""
     col = 'home_p1_m_ewma_pre'
     if col not in df.columns:
         return pd.Series(True, index=df.index)
-    return df[col] != 0
+    return (df[col] != 0) & (df['away_p1_m_ewma_pre'] != 0)
 
 
 def make_dmatrix(df, feature_cols):

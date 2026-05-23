@@ -1,7 +1,7 @@
 # Data Directory
 
-This directory contains all data artifacts produced by the pipeline.
-Data files are **not** checked into version control — only the folder structure is tracked via `.gitkeep` files.
+This directory contains data artifacts produced by the pipeline.
+Raw API responses are not intended for version control. Selected canonical derived artifacts, including gold model inputs, matched market data, and summary outputs, may be checked in to make the analysis reproducible without rerunning every ingestion step.
 
 To populate, run the pipeline scripts in order from `pipelines/01_ingestion/` through `pipelines/05_modeling/`.
 
@@ -49,7 +49,7 @@ Static configuration files.
 - `franchise_map.csv` — team_id → franchise_id mapping
 
 ### `calibration/`
-Platt scaling calibration outputs.
+Platt scaling diagnostic outputs.
 - `platt_calibrator_2020_2024.csv`, `oof_raw_preds_*.csv`, `oof_calibrated_preds_*.csv`
 - `reliability_diagram_*.png`
 
@@ -65,14 +65,14 @@ Polymarket prediction market data.
 - `polymarket_prices_history.csv`, `polymarket_trades.csv`, `polymarket_settlements.csv`
 - Backtest outputs: `backtest_*_summary.csv`
 
-### `final_comparisons/`
-Cross-model comparison outputs (Elo vs XGBoost vs ensemble vs markets).
+### `model_comparison/`
+Cross-model comparison outputs (Elo vs XGBoost vs markets).
 
 ### `logit_benchmark/`
 Logistic regression benchmark outputs.
 
-### `Tables/`
-Publication-ready tables and plots.
+### `trading_results/`
+Trading backtest outputs used by the analysis notebooks.
 
 ### `spec_sheets/`
 Data specification documents for each table in the pipeline.

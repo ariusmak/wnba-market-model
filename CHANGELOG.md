@@ -12,10 +12,10 @@ All 34+ numbered pipeline scripts were copied and organized into stages:
 - `02_parsing/` — Bronze JSON → silver CSV parsing and normalization
 - `03_features/` — Feature engineering (Elo, player state, recent form, style, schedule context)
 - `04_gold/` — Final XGBoost input assembly
-- `05_modeling/` — XGBoost CV, ensemble creation, calibration, Elo grid search
+- `05_modeling/` — XGBoost CV, calibration diagnostics, Elo grid search
 - `06_markets/` — Kalshi and Polymarket data ingestion pipelines
 
-**No code changes** to pipeline scripts (they reference `../data/` paths which remain valid from `organized/pipelines/`).
+Pipeline scripts were retained in the organized tree, with later documentation/configuration cleanup applied where canonical defaults had drifted.
 
 ### Source Code (`src/srwnba/`, `utils/`)
 Copied verbatim. Includes:
@@ -47,7 +47,7 @@ Copied verbatim. Includes:
 | `README.md` | Rewritten with actual results, architecture, exploration summary, pipeline docs |
 | `CLAUDE.md` | Kept as-is (detailed methodology specification) |
 | `docs/tuning_methodology.md` | New: full tuning strategy with Stage 3 top-10 config table |
-| `data/xgb_stage3_top10.csv` | New: extracted top 10 XGB configs from 4,864 + 1,296 evaluated |
+| `data/xgb_stage3_top10.csv` | New: extracted top 10 XGB configs from the executed 2,592-config Stage 3 main grid |
 | `data/spec_sheets/` | Kept: table specifications for all intermediate data tables |
 
 ---
@@ -63,7 +63,7 @@ These notebooks document exploration that informed design decisions but are not 
 | `kalshi_trading.ipynb` | Early Kalshi market exploration |
 | `poly_trading.ipynb` | Polymarket exploration — documents why it was dropped (thin liquidity) |
 | `NN_test.ipynb` | Neural network alternative — documents why XGBoost was preferred |
-| `XGBpure.ipynb` | XGBoost without Elo base_margin — confirms architecture decision |
+| `XGBpure.ipynb` | XGBoost without Elo base_margin — supports architecture decision |
 | `logit.ipynb` | Logistic regression benchmark (also in analysis/ for the main pipeline) |
 ---
 
@@ -83,7 +83,7 @@ These notebooks document exploration that informed design decisions but are not 
 | `notebooks/kalshi/` subdirectory | Market pipeline scripts already in `pipelines/06_markets/kalshi/` |
 | `notebooks/polymarket/` subdirectory | Market pipeline scripts already in `pipelines/06_markets/polymarket/` |
 | `NBA/` directory | Cross-sport validation spinoff, separate project scope |
-| `data/` (raw data files) | Data directories exist as empty placeholders with README. Raw data too large for version control and requires API keys to reproduce. |
+| `data/` (raw API files) | Raw API responses are large and require API keys to reproduce; selected canonical derived artifacts are included for reproducibility. |
 | `notebooks/2020_omit_test.ipynb` | Deleted in working tree (2020 season omission test, results incorporated into main analysis) |
 | `notebooks/calibration.ipynb` | Deleted in working tree |
 | `notebooks/lean_features_test.ipynb` | Deleted in working tree |

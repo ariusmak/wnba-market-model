@@ -1,6 +1,6 @@
 # WNBA Prediction Market Model
 
-A sports outcome forecasting and trading model for WNBA prediction markets on Kalshi, implementing Elo structural priors, Gradient-Boosted Trees with in-depth feature engineering, no look-ahead bias and practical market application.
+A sports outcome forecasting and trading model for WNBA prediction markets on Kalshi, implementing Elo structural priors, gradient-boosted trees with as-of feature construction, walk-forward evaluation, and practical market application.
 
 ---
 
@@ -17,7 +17,7 @@ Walk-forward cross-validation on 2020–2024 (development), with final holdout e
 | XGBoost (no Elo) | 0.6228 | 0.2165 | 65.1% | 0.6327 | 0.2188 | 66.8% |
 | Logistic Reg + Elo | 0.7322 | 0.2285 | 65.9% | 0.6684 | 0.2332 | 64.8% |
 
-The XGBoost + Elo model improves over the Elo baseline in both development (−0.28 log loss points) and on the untouched 2025 holdout (−0.30 points), with a consistent accuracy advantage. XGBoost without Elo is substantially worse, confirming the Elo-as-base-margin architecture. Logistic regression has the worst performance of all models, confirming the importance of models learning non-linear relationships.
+The XGBoost + Elo model improves over the Elo baseline in both development (−0.0028 log loss) and on the untouched 2025 holdout (−0.0030), with a consistent accuracy advantage. XGBoost without Elo is substantially worse, supporting the Elo-as-base-margin architecture. Logistic regression has the weakest performance of the tested models, suggesting that the useful corrections are non-linear rather than a simple linear adjustment to Elo.
 
 Full model comparison, per-fold breakdowns, feature importance, and calibration diagnostics: [`notebooks/analysis/forecasting_results.ipynb`](notebooks/analysis/forecasting_results.ipynb).
 
@@ -66,27 +66,40 @@ A bootstrap comparison of per-trade log-returns (10K resamples) tests whether th
 |--------|-------|
 | Full model mean log-return | +0.0183 per trade |
 | Elo mean log-return | +0.0106 per trade |
-| P(Full Model > Elo) | 0.647 |
+| P(Full Model > Elo) | 0.652 |
 | Growth-rate difference 95% CI | [−0.033, +0.048] |
 
-With ~130–155 trades in a single season, the difference is directionally consistent but not statistically significant at conventional levels. Roughly 2–3 seasons of similar performance would be needed for significance.
+Under a one-sided null-centered bootstrap (H₀: mean log-return = 0), the full-model strategy clears the null at **p = 0.111**, Elo at **p = 0.222**, and the full-model − Elo difference at **p = 0.355**. With ~130–155 trades in a single season, the difference is directionally consistent but not statistically significant at conventional levels; additional seasons would be needed to tighten the interval enough for a formal model-vs-Elo claim.
 
 Full trading analysis: [`notebooks/analysis/trading_results2.ipynb`](notebooks/analysis/trading_results2.ipynb).
 
 ### Model vs Market Comparison
 
-On the 2025 holdout, the model's predictions are compared head-to-head against Kalshi and Polymarket pre-tipoff implied probabilities:
+On the 2025 holdout, the model's predictions are compared head-to-head against Kalshi and Polymarket pre-tipoff implied probabilities (one row per game, after deduplicating Polymarket's repeat `condition_id` listings):
 
 | Source | n | Log Loss | Brier | Accuracy |
 |--------|---|----------|-------|----------|
-| XGB + Elo (model) | 366 | 0.620 | 0.214 | 66.1% |
-| Elo only | 366 | 0.619 | 0.214 | 67.2% |
-| Kalshi pre-tipoff | 349 | 0.612 | 0.213 | 63.0% |
-| Polymarket pre-tipoff | 277 | 0.674 | 0.237 | 62.5% |
+| XGB + Elo (model) | 310 | 0.612 | 0.211 | 67.4% |
+| Elo only | 310 | 0.615 | 0.213 | 66.8% |
+| Kalshi pre-tipoff | 296 | 0.612 | 0.213 | 62.8% |
+| Polymarket pre-tipoff | 221 | 0.626 | 0.219 | 64.3% |
 
-On the common subset (263 games with all four sources), the model and Kalshi are closely matched on calibration while the model maintains higher accuracy.
+On the common subset (210 games with all four sources), Kalshi has the lower log loss (0.619 vs 0.625), the model has much higher accuracy (67.6% vs 62.9%), and Brier scores are effectively tied (0.2163 vs 0.2162). This points to different strengths rather than a clean market-beating calibration result.
 
-When the model and Kalshi disagree on the game direction (59 games), the model is correct **61%** of the time.
+When the model and Kalshi disagree on the game direction (51 games), the model is correct **65%** of the time. This is a high-signal slice for trade selection, but it is still a small 2025-only sample.
+
+### Result Audit Trail
+
+The main claims in this README are backed by regenerated tables and figures in [`outputs/`](outputs/), with source notebooks in [`notebooks/analysis/`](notebooks/analysis/) and [`notebooks/output generation/`](notebooks/output%20generation/):
+
+| Claim area | Primary table(s) | Primary notebook(s) |
+|------------|------------------|---------------------|
+| Forecasting benchmark | [`forecast_model_performance_summary.csv`](outputs/forecast_model_performance_summary.csv), [`forecast_per_fold_performance_table.csv`](outputs/forecast_per_fold_performance_table.csv) | [`forecasting_results.ipynb`](notebooks/analysis/forecasting_results.ipynb), [`forecasting.ipynb`](notebooks/output%20generation/forecasting.ipynb) |
+| Feature ablations / robustness | [`feature_block_ablation_summary.csv`](outputs/feature_block_ablation_summary.csv), [`training_windows_logloss_summary.csv`](outputs/training_windows_logloss_summary.csv) | [`ablations.ipynb`](notebooks/analysis/ablations.ipynb), [`training_windows.ipynb`](notebooks/analysis/training_windows.ipynb) |
+| Market comparison | [`market_model_performance_summary.csv`](outputs/market_model_performance_summary.csv), [`market_directional_disagreement_table.csv`](outputs/market_directional_disagreement_table.csv) | [`market_comparison.ipynb`](notebooks/output%20generation/market_comparison.ipynb) |
+| Trading grid / return decomposition | [`trade_half_kelly_best_config_table.csv`](outputs/trade_half_kelly_best_config_table.csv), [`trade_return_decomposition_table.csv`](outputs/trade_return_decomposition_table.csv) | [`trading_results2.ipynb`](notebooks/analysis/trading_results2.ipynb), [`return_decomposition.ipynb`](notebooks/output%20generation/return_decomposition.ipynb) |
+| Liquidity and execution sensitivity | [`liq_execution_summary_table.csv`](outputs/liq_execution_summary_table.csv), [`trade_volume_share_summary_table.csv`](outputs/trade_volume_share_summary_table.csv), [`trade_cutoff_sweep_summary.csv`](outputs/trade_cutoff_sweep_summary.csv) | [`return_investigation.ipynb`](notebooks/analysis/return_investigation.ipynb), [`liquidity.ipynb`](notebooks/output%20generation/liquidity.ipynb) |
+| Statistical significance | [`sig_bootstrap_summary_table.csv`](outputs/sig_bootstrap_summary_table.csv) | [`significance.ipynb`](notebooks/output%20generation/significance.ipynb) |
 
 ---
 
@@ -96,7 +109,7 @@ When the model and Kalshi disagree on the game direction (59 games), the model i
 
 The most striking result in the forecasting table is that XGBoost *without* Elo — using only player, form, style, and schedule features — achieves a dev log loss of 0.623, within 0.021 of the Elo-only baseline (0.602). These two models use completely different data sources and methodologies: Elo sees only game outcomes and margin of victory, while the features-only XGBoost sees player availability, box-score tendencies, rest patterns, and team style. The fact that they converge to similar performance suggests that Elo already encodes much of what matters, team strength is the dominant signal, and contextual features provide only a marginal correction.
 
-This is further confirmed by feature importance. When XGBoost has no Elo base margin, it learns sensible structure: net rating EWMA and top-player quality (`p1_q`, `p2_q`) dominate importance, essentially reconstructing a team-strength signal from available data. When XGBoost *does* have Elo as a base margin, the remaining feature importance is scattered across low-level player slots (e.g., `home_p2_played_last_game`, `away_p5_days_since_last_played`) with no clear interpretable pattern — it is fitting noise around an already-strong prior. The logistic regression tells the same story: `base_margin` has a coefficient of 0.92 (nearly 1.0, meaning Elo is passed through almost unchanged), and the largest feature coefficients are schedule and player availability variables with modest magnitude.
+This is further supported by feature importance. When XGBoost has no Elo base margin, it learns sensible structure: net rating EWMA and top-player quality (`p1_q`, `p2_q`) dominate importance, essentially reconstructing a team-strength signal from available data. When XGBoost *does* have Elo as a base margin, the remaining feature importance is scattered across low-level player slots (e.g., `home_p2_played_last_game`, `away_p5_days_since_last_played`) with no single dominant correction signal. The logistic regression tells the same story: `base_margin` has a coefficient of 0.92 (nearly 1.0, meaning Elo is passed through almost unchanged), and the largest feature coefficients are schedule and player availability variables with modest magnitude.
 
 ### Small log loss improvements, large trading returns
 
@@ -142,20 +155,29 @@ Two important caveats on the sweep-return column:
 - At **$100–$1,000**, sweep *exceeds* ideal. This is an upward bias: historical trades represent all market activity, and the VWAP below our threshold is sometimes cheaper than the entry snapshot price. A real trader placing limit orders would not systematically get those improved fills. Treat small-bankroll sweep returns as an optimistic envelope.
 - At **$5,000+**, the opposite bias dominates: we are competing with the same historical participants for that liquidity, not observing resting orders. Realistic execution likely lies *below* the sweep return.
 
-The meaningful signal across the table is the trajectory: **Kelly % returns are flat under infinite liquidity but degrade monotonically above $1k** once order size exceeds typical in-window volume. At the $5k bankroll used as a realistic case, the sweep path delivers **+765% ($38,250 P&L)** — a 28% haircut from the ideal path.
+The meaningful signal across the table is the trajectory: **Kelly % returns are flat under infinite liquidity but degrade monotonically above $1k** once order size exceeds typical in-window volume. At the $5k bankroll used as a realistic case, the sweep path delivers **+806% ($40,276 P&L)** — a 24% haircut from the ideal path.
 
-**Capacity breakpoint.** Trade-by-trade fill rates drop from 98% (Q1) to 67% (Q4) at $5k because Kelly wagers grow with the bankroll and late-season contract sizes routinely exceed pre-tipoff window liquidity (mean 5,941 contracts needed vs median 8,364 available). Above ~$2.5k, the strategy is liquidity-constrained rather than edge-constrained. Scaling beyond this requires either multi-venue execution, in-game entries (currently disallowed), or deliberate under-sizing below Kelly.
+**Capacity breakpoint.** Trade-by-trade fill rates drop from 98% (Q1) to 67% (Q4) at $5k because Kelly wagers grow with the bankroll and late-season contract sizes routinely exceed pre-tipoff window liquidity (mean 14,161 contracts needed vs median 8,364 available). Above ~$2.5k, the strategy is liquidity-constrained rather than edge-constrained. Per-trade volume-share analysis supports this: the median trade would have been **50% of qualifying-price tape volume in its entry window**, and **41% of trades would have fully consumed the qualifying-price book**. The $5k path is a capacity ceiling, not a target — scaling beyond requires multi-venue execution, in-game entries (currently disallowed), or deliberate under-sizing below Kelly.
 
-**Recommended live sizing.** A hard **5% per-trade cap** on top of half-Kelly keeps expected wagers inside the liquid region on nearly every trade while limiting drawdown under realistic hit-rate variance. Plain half-Kelly on a $5k bankroll prescribes wagers averaging $5,492 and max $46,741 — well outside what the order book can absorb. See [`return_investigation.ipynb`](notebooks/analysis/return_investigation.ipynb) §4 for the full analysis.
+**Exposure-cap stress test.** Static exposure caps reduce drawdowns and improve fill rates, but they also materially reduce terminal return in this sample: a 6% cap improves mean fill rate from 79% to 89% while reducing return from +806% to +273%; a 15% cap lands at 81% fill and +714% return. These caps are sensitivity checks rather than a recommended live policy. Plain half-Kelly on a $5k bankroll prescribes wagers averaging $5,492 and max $46,741 — well outside what the order book can absorb. See [`return_investigation.ipynb`](notebooks/analysis/return_investigation.ipynb) §4 for the full analysis.
+
+**Late-window execution discipline.** Stopping new entries 3 hours before tipoff (T-3h) improves total return from **+806% → +963%**, hit rate from 40.3% → 42.1%, and per-trade Sharpe from **+0.121 → +0.141** on the same liquidity-constrained $5k simulation. The 13 dropped trades had measurably worse realized outcomes per dollar staked, consistent with adverse-selection risk from late-breaking information (lineup announcements, scratches, beat-reporter rumors) that the pregame feature snapshot cannot see. The cutoff sweep is non-monotonic, but T-3h and T-8h both improve on the no-cutoff baseline before the T-12h sample becomes too small. The mechanism is supported by a first-qualification-time bucket analysis showing trades that first qualified inside the final 8 hours have a 27.3% hit rate and negative mean log-return, versus 40.7% / +0.019 for early-qualifying trades.
 
 ### The honest uncertainty
 
-Despite the compelling return numbers, the bootstrap significance test gives P(Full Model > Elo) = 0.647 — suggestive but far from conclusive. A single season of ~130–155 trades is simply insufficient to statistically distinguish two models that both have positive edge. This is a structural limitation of WNBA market size, not a modeling failure.
+Despite the compelling return numbers, the bootstrap significance test gives P(Full Model > Elo) = 0.652 — suggestive but far from conclusive. A single season of ~130–155 trades is simply insufficient to statistically distinguish two models that both have positive edge. This is a structural limitation of WNBA market size, not a modeling failure.
+
+### Scope and limitations
+
+- **Single-season market test.** Forecasting is evaluated with 2020–2024 walk-forward OOF and a 2025 holdout, but trading evidence comes from one Kalshi season. The return profile is promising, not a long-run proof.
+- **Execution simulation is conservative in some places and optimistic in others.** Historical trade sweeps approximate available liquidity but are not a full order-book replay, and they do not model market impact from the strategy's own orders.
+- **Pregame-only information set.** The model intentionally excludes in-game updates and late unstructured news. The late-window cutoff results suggest that lineup/news timing matters.
+- **Market prices are evaluation targets, not model inputs.** Kalshi and Polymarket prices are used for comparison and trading entry, but not as forecasting features in the final model.
 
 ### Future research directions
 
-- **Multi-season validation.** The most direct path to significance: 2–3 additional seasons of Kalshi WNBA data under the same pipeline would dramatically tighten the confidence interval.
-- **Cross-sport transfer.** Testing the same Elo + XGBoost architecture on NBA or other leagues with deeper markets could validate whether the approach generalizes. An initial NBA scaffold exists in this repository.
+- **Multi-season validation.** The most direct path to significance is additional Kalshi WNBA seasons under the same pipeline, which would tighten the confidence interval and test whether the trade-selection edge persists.
+- **Cross-sport transfer.** Testing the same Elo + XGBoost architecture on NBA or other leagues with deeper markets could validate whether the approach generalizes.
 - **In-play model.** The current system is pre-tipoff only. A live model that updates with in-game information could capture additional edge, particularly for second-half or live markets.
 - **Ensemble with market prices.** Rather than treating market prices as the adversary, incorporating pre-tipoff Kalshi/Polymarket implied probabilities as features could improve calibration — the market captures information (injury rumors, sharp money, lineup leaks) that the model's feature set may miss.
 - **Disentangling the trading advantage.** A controlled study isolating trade selection vs. probability accuracy vs. Kelly sizing would clarify which mechanism drives the return gap between the full model and Elo. This could inform whether to invest in better features or better entry rules.
@@ -185,6 +207,31 @@ Learns contextual adjustments using 160 pregame features across four blocks:
 
 Elo probability is passed as `base_margin`, not as an ordinary feature. Full gold table layout: [`game_xgboost_input_spec.md`](data/spec_sheets/game_xgboost_input_spec.md).
 
+### Robustness Checks
+
+Feature-block ablations keep the Elo base margin and final XGBoost configuration fixed, then remove one contextual block at a time. On the 2025 holdout, every block removal worsens log loss relative to the full model:
+
+| Model variant | 2025 Log Loss | Δ vs full | Interpretation |
+|---------------|---------------|-----------|----------------|
+| Full model | **0.6121** | — | Elo + all contextual feature blocks |
+| No player block | 0.6144 | +0.0023 | Player availability contributes, but modestly |
+| No style block | 0.6171 | +0.0050 | Style features add a small correction |
+| No recent-form block | 0.6251 | +0.0130 | Recent form is a larger holdout contributor |
+| No rest/travel block | 0.6259 | +0.0137 | Schedule context is a larger holdout contributor |
+
+The same direction holds in 2020–2024 OOF results, though the deltas are smaller. This supports the feature architecture without implying that every individual feature is stable or causal.
+
+Training-window sensitivity also favors the final expanding-history setup:
+
+| Training window | OOF Log Loss | 2025 Log Loss |
+|-----------------|--------------|---------------|
+| Expanding from 2015 | **0.5994** | **0.6121** |
+| Expanding from 2018 | 0.6041 | 0.6145 |
+| Rolling 2-year | 0.6017 | 0.6168 |
+| Rolling 3-year | 0.6040 | 0.6171 |
+
+This suggests that older WNBA seasons still add useful signal despite league drift. Platt scaling was evaluated as a calibration diagnostic, but it is not used in the final forecast: it slightly improved pooled OOF calibration, while worsening the 2025 holdout log loss from 0.61215 to 0.61298. Final trading results therefore use raw XGBoost + Elo probabilities.
+
 ## Hyperparameter Tuning
 
 Three-stage tuning strategy with walk-forward CV. See [`docs/tuning_methodology.md`](docs/tuning_methodology.md) for full details including search grids and the Stage 3 top-10 configuration table.
@@ -199,7 +246,7 @@ Three-stage tuning strategy with walk-forward CV. See [`docs/tuning_methodology.
 
 All hyperparameters are also defined in [`config/final_hyperparams.py`](config/final_hyperparams.py).
 
-The XGBoost configuration was chosen as rank 2 out of 1,296 candidates in the refined grid search. The rank-1 config (lr=0.03) was rejected due to unstable early stopping (min_best_round=2 in one fold), while rank 2 (lr=0.02) showed consistent convergence across all folds (min_best_round=39) with only 0.00038 higher mean log loss.
+The XGBoost configuration was chosen as rank 2 out of 2,592 candidates in the executed Stage 3 main grid. The rank-1 config (lr=0.03) was rejected due to unstable early stopping (min_best_round=2 in one fold), while rank 2 (lr=0.02) showed consistent convergence across all folds (min_best_round=39) with only 0.00038 higher mean log loss. A later aggressive-grid diagnostic was run in the same notebook but did not replace the main-grid selection.
 
 ---
 
@@ -213,7 +260,7 @@ Several alternative approaches were investigated and excluded from the final pip
 | **Pre-tipoff convergence exits** | Prices rarely move enough pre-game (0–2% trigger rate) | `scratchwork/trading_results.ipynb` |
 | **Bootstrap ensemble** | Did not meaningfully improve over the single model | `scratchwork/ensemble_comparison.ipynb` |
 | **Neural network (MLP)** | Did not outperform XGBoost; higher variance across folds | `scratchwork/NN_test.ipynb` |
-| **XGBoost without Elo** | Worse than Elo + XGBoost, confirming base-margin design | `scratchwork/XGBpure.ipynb` |
+| **XGBoost without Elo** | Worse than Elo + XGBoost, supporting base-margin design | `scratchwork/XGBpure.ipynb` |
 | **Full-Kelly sizing** | Too aggressive at 35–44% hit rates; ruin risk | `analysis/trading_results2.ipynb` §7 |
 | **Two-thirds-life entry** | Half-life (~17h) consistently outperformed (~12h) | `analysis/trading_results2.ipynb` §8 |
 
@@ -240,18 +287,35 @@ organized/
 │   ├── 02_parsing/                 # Bronze JSON → silver CSVs
 │   ├── 03_features/                # Silver → feature tables
 │   ├── 04_gold/                    # Feature assembly → XGBoost input (160 features)
-│   ├── 05_modeling/                # XGBoost CV, calibration, Elo tuning
+│   ├── 05_modeling/                # XGBoost CV, calibration diagnostics, Elo tuning
 │   └── 06_markets/                 # Kalshi & Polymarket data ingestion
 ├── notebooks/
 │   ├── analysis/                   # Final result notebooks
+│   │   ├── ablations.ipynb             # Feature-block ablation checks
 │   │   ├── forecasting_results.ipynb   # Model comparison & holdout evaluation
+│   │   ├── platt_check.ipynb           # Calibration diagnostic
+│   │   ├── return_investigation.ipynb  # Liquidity and execution sensitivity
 │   │   ├── trading_results2.ipynb      # Kalshi trading backtest & significance testing
+│   │   ├── training_windows.ipynb      # Expanding vs rolling training-window sensitivity
 │   │   └── prelim.ipynb                # Preliminary data exploration
+│   ├── output generation/          # Rebuilds publication-ready output tables/figures
+│   │   ├── forecasting.ipynb
+│   │   ├── feature_importance.ipynb
+│   │   ├── market_comparison.ipynb
+│   │   ├── trading_strategy.ipynb
+│   │   ├── return_decomposition.ipynb
+│   │   ├── liquidity.ipynb
+│   │   └── significance.ipynb
 │   ├── xgb_tuning/                 # XGBoost tuning (Stage 3)
 │   │   ├── XGB_tuning3.ipynb           # Final Stage 3 grid search
 │   │   └── complexity_curve.ipynb
 │   └── scratchwork/                # Exploration notebooks (see scratchwork/README.md)
 ├── data/
+│   ├── gold/                       # Final ML-ready XGBoost inputs
+│   ├── kalshi/                     # Kalshi market data and matched game markets
+│   ├── polymarket/                 # Polymarket market data
+│   ├── model_comparison/           # Model comparison outputs used by notebooks
+│   ├── trading_results/            # Backtest trade/result tables
 │   ├── spec_sheets/                # Table and feature specifications
 │   │   ├── player_state_history_spec.md
 │   │   ├── game_team_player_spec.md
@@ -263,6 +327,7 @@ organized/
 │   │   └── polymarket_ingest_spec.md
 │   ├── config/                     # Static config (franchise_map.csv)
 │   └── xgb_stage3_top10.csv        # Top 10 XGB configs from Stage 3
+├── outputs/                        # Canonical figures and summary tables
 ├── docs/
 │   └── tuning_methodology.md       # Full tuning strategy with search grids
 ├── CLAUDE.md                       # Detailed methodology specification
@@ -289,7 +354,7 @@ Builds feature tables: Elo ratings, player state history (EWMA minutes, quality 
 Assembles the final 160-feature XGBoost input table with `base_margin = logit(p_elo)`. Layout documented in [`game_xgboost_input_spec.md`](data/spec_sheets/game_xgboost_input_spec.md).
 
 ### 5. Modeling (`pipelines/05_modeling/`)
-Walk-forward XGBoost CV, Platt scaling calibration, Elo grid search.
+Walk-forward XGBoost CV, calibration diagnostics, Elo grid search.
 
 ### 6. Market Data (`pipelines/06_markets/`)
 Kalshi and Polymarket market ingestion, matching to Sportradar game IDs.
@@ -316,13 +381,13 @@ conda activate kalshi-wnba
 pip install -r requirements.txt
 ```
 
-Requires a `.env` file with `SPORTRADAR_API_KEY` (see `.env.example`).
+Requires a `.env` file with `SPORTRADAR_API_KEY` for Sportradar ingestion and Kalshi credentials for live market ingestion (see `.env.example`).
 
 ---
 
 ## Key Design Decisions
 
-1. **Elo as base_margin, not a feature.** Elo provides the structural prior; XGBoost learns corrections on top of it. This is more principled than including Elo as just another feature — confirmed by the XGBoost-without-Elo benchmark performing substantially worse.
+1. **Elo as base_margin, not a feature.** Elo provides the structural prior; XGBoost learns corrections on top of it. This is more principled than including Elo as just another feature — supported by the XGBoost-without-Elo benchmark performing substantially worse.
 
 2. **Walk-forward CV, not k-fold.** Sports data is temporal. Using future data to predict past games would be leakage.
 
@@ -332,4 +397,4 @@ Requires a `.env` file with `SPORTRADAR_API_KEY` (see `.env.example`).
 
 5. **Franchise continuity.** The San Antonio Stars → Las Vegas Aces (2018) relocation is treated as franchise continuity, preserving Elo and player priors across the move.
 
-6. **First 9 games of 2015 excluded.** No 2014 prior data exists, so EWMA and quality features are uninformative for these games.
+6. **Cold-start 2015 rows excluded.** Rows are dropped when either team's top-player EWMA minutes are zero. This affects the earliest 2015 games, where no 2014 player-prior history exists and player features are not yet informative.

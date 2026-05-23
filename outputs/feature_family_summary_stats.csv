@@ -1,0 +1,27 @@
+Feature family,Block,Columns represented,Mean,Std. dev.,"Median [Q1, Q3]",Zero rate,Missing rate
+Consecutive DNPs,Player injury / availability,14,0.0088,0.177,"0.000 [0.000, 0.000]",99.6%,0.0%
+Days since first injury report,Player injury / availability,14,0.480,5.068,"0.000 [0.000, 0.000]",97.7%,0.0%
+Days since last DNP,Player injury / availability,14,0.165,1.658,"0.000 [0.000, 0.000]",98.0%,0.0%
+Days since last played,Player injury / availability,14,2.604,4.238,"2.000 [1.000, 3.000]",17.0%,0.0%
+Injury present flag,Player injury / availability,14,0.023,0.150,"0.000 [0.000, 0.000]",97.7%,0.0%
+Minutes last game,Player injury / availability,14,22.797,10.948,"25.000 [16.567, 31.279]",9.9%,0.0%
+Played last game,Player injury / availability,14,0.901,0.298,"1.000 [1.000, 1.000]",9.9%,0.0%
+Player minutes EWMA,Player injury / availability,14,22.168,6.864,"22.685 [16.987, 27.740]",0.0%,0.0%
+Player quality per minute,Player injury / availability,14,0.452,0.133,"0.439 [0.364, 0.528]",0.0%,0.0%
+Free throw rate EWMA,Recent team form,2,0.202,0.079,"0.219 [0.160, 0.258]",2.4%,0.0%
+Net rating EWMA,Recent team form,2,0.475,5.905,"0.459 [-3.542, 4.502]",2.4%,0.0%
+Offensive rebound% EWMA,Recent team form,2,0.179,0.073,"0.192 [0.140, 0.231]",2.5%,0.0%
+Turnover% EWMA,Recent team form,2,0.125,0.046,"0.139 [0.102, 0.159]",2.4%,0.0%
+eFG% EWMA,Recent team form,2,0.355,0.136,"0.402 [0.279, 0.456]",2.4%,0.0%
+Defensive 2PA allowed rate,Team stylistic profile,2,0.709,0.048,"0.708 [0.675, 0.741]",0.0%,0.0%
+Defensive 3PA allowed rate,Team stylistic profile,2,0.291,0.048,"0.292 [0.259, 0.325]",0.0%,0.0%
+Defensive forced turnover%,Team stylistic profile,2,0.159,0.021,"0.156 [0.146, 0.173]",0.0%,0.0%
+Offensive 2PA rate,Team stylistic profile,2,0.709,0.065,"0.708 [0.666, 0.754]",0.0%,0.0%
+Offensive 3PA rate,Team stylistic profile,2,0.291,0.065,"0.292 [0.246, 0.334]",0.0%,0.0%
+Offensive turnover%,Team stylistic profile,2,0.159,0.019,"0.158 [0.148, 0.168]",0.0%,0.0%
+Back-to-back indicator,Rest / travel context,2,0.056,0.230,"0.000 [0.000, 0.000]",94.4%,0.0%
+Days rest,Rest / travel context,2,2.147,3.128,"1.000 [1.000, 2.000]",5.6%,0.0%
+Games last 4 days,Rest / travel context,2,1.074,0.626,"1.000 [1.000, 1.000]",16.1%,0.0%
+Games last 7 days,Rest / travel context,2,2.067,0.845,"2.000 [2.000, 3.000]",4.7%,0.0%
+Timezone shift,Rest / travel context,2,-0.0097,1.136,"0.000 [0.000, 0.000]",64.9%,0.0%
+Travel miles,Rest / travel context,2,603.241,658.872,"427.300 [0.000, 978.900]",35.6%,0.0%

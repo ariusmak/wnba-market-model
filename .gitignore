@@ -3,3 +3,11 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 .claude/
+
+# Oversized raw market-history dumps (regenerable from upstream ingest).
+# Kept out of git because polymarket prices (241 MB) exceeds GitHub's 100 MB
+# per-file limit and the kalshi tape files (58 / 63 MB) bloat the repo.
+# The small match/markets/settlements CSVs alongside them remain tracked.
+data/kalshi/kalshi_trades.csv
+data/kalshi/kalshi_candles_1m.csv
+data/polymarket/polymarket_prices_history.csv

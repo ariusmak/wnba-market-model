@@ -22,7 +22,7 @@ Input requirements:
     The 'home_win' label column is NOT required for prediction.
 
 Output:
-  - p_home: calibrated home-win probability (float between 0 and 1)
+  - p_home: raw XGBoost + Elo home-win probability (float between 0 and 1)
 
 ──────────────────────────────────────────────────────────────────────
 USAGE — Python (for live trading integration):
@@ -167,7 +167,7 @@ def _cold_start_mask(df):
 
     This happens at the start of the first modeled season (2015) before
     enough games have been played for m_ewma to become informative.
-    See CLAUDE.md §3 — first 9 games of 2015 are excluded for this reason.
+    See CLAUDE.md §3 — cold-start 2015 rows are excluded for this reason.
     """
     col = "home_p1_m_ewma_pre"
     if col not in df.columns:

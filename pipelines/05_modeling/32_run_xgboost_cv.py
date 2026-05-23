@@ -12,26 +12,26 @@ For each test_year Y in 2020..2024:
 Feature hyperparam (affects column selection only, no dataset rebuild needed):
   --n-players       N_players  ∈ {5, 7, 10}   player slots included per side
 
-Model hyperparams (tuned defaults — confirmed by XGB_tuning3 + follow-up grid):
-  --max-depth               default 6      (tuning3: d=6 >> d=5,7,8,9)
-  --min-child-weight        default 2      (tuning3: mcw=2 best; mcw=1 excluded from search)
-  --subsample               default 0.9   (fixed throughout tuning)
-  --colsample-bytree        default 0.8   (tuning3: cbt=0.8 > 0.6 > 1.0)
-  --reg-lambda              default 0.5   (tuning3: rl=0.5 dominated; lower values worse)
+Model hyperparams (canonical Stage 3 rank-2 defaults):
+  --max-depth               default 6      (rank 2 in executed main grid)
+  --min-child-weight        default 3
+  --subsample               default 0.8   (fixed throughout executed main grid)
+  --colsample-bytree        default 0.6
+  --reg-lambda              default 1.0
   --reg-alpha               default 0.0   (fixed throughout tuning)
-  --gamma                   default 0.5   (tuning3: monotone 0→0.1→0.5; follow-up confirmed 0.5 is peak)
-  --learning-rate           default 0.03  (tuning3: monotone 0.01→0.02→0.03; follow-up confirmed 0.03 is peak)
-  --num-boost-round         default 3000  (ES terminates early; ~16 rounds at lr=0.03)
+  --gamma                   default 0.1
+  --learning-rate           default 0.02
+  --num-boost-round         default 3000
   --early-stopping-rounds   default 150
 
 Usage:
   python 32_run_xgboost_cv.py \\
     --gold-dir data/gold/variants/hM5_Linj14 \\
     --n-players 7 \\
-    --max-depth 3 --min-child-weight 1 \\
-    --subsample 0.8 --colsample-bytree 0.8 \\
-    --reg-lambda 1 --reg-alpha 0 --gamma 0 \\
-    --learning-rate 0.03 \\
+    --max-depth 6 --min-child-weight 3 \\
+    --subsample 0.8 --colsample-bytree 0.6 \\
+    --reg-lambda 1 --reg-alpha 0 --gamma 0.1 \\
+    --learning-rate 0.02 \\
     --num-boost-round 3000 --early-stopping-rounds 75
 
   # Or point at the default gold dir:
@@ -341,15 +341,15 @@ def main():
     ap.add_argument("--n-players", type=int, default=7,
                     help="Player slots per side to include as features {5,7,10}")
 
-    # Model hyperparams — tuned defaults (XGB_tuning3 + follow-up grid)
+    # Model hyperparams - canonical Stage 3 rank-2 defaults.
     ap.add_argument("--max-depth", type=int, default=6)
-    ap.add_argument("--min-child-weight", type=int, default=2)
-    ap.add_argument("--subsample", type=float, default=0.9)
-    ap.add_argument("--colsample-bytree", type=float, default=0.8)
-    ap.add_argument("--reg-lambda", type=float, default=0.5)
+    ap.add_argument("--min-child-weight", type=int, default=3)
+    ap.add_argument("--subsample", type=float, default=0.8)
+    ap.add_argument("--colsample-bytree", type=float, default=0.6)
+    ap.add_argument("--reg-lambda", type=float, default=1.0)
     ap.add_argument("--reg-alpha", type=float, default=0.0)
-    ap.add_argument("--gamma", type=float, default=0.5)
-    ap.add_argument("--learning-rate", type=float, default=0.03)
+    ap.add_argument("--gamma", type=float, default=0.1)
+    ap.add_argument("--learning-rate", type=float, default=0.02)
     ap.add_argument("--num-boost-round", type=int, default=3000)
     ap.add_argument("--early-stopping-rounds", type=int, default=150)
     ap.add_argument("--nthread", type=int, default=-1,

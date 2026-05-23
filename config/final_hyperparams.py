@@ -6,7 +6,7 @@ Tuning history:
   - Stage 0: Elo tuned via iterative walk-forward grid search (5 rounds)
   - Stage 1: Feature params (N_players, h_M, L_inj) tuned jointly with conservative XGB grid (3,888 configs)
   - Stage 2: Remaining feature params (tau, h_team) tuned with Stage 1 winners locked (12 configs)
-  - Stage 3: XGBoost params tuned via walk-forward CV (1,296 configs in final grid)
+  - Stage 3: XGBoost params tuned via walk-forward CV (2,592 configs in final main grid)
   - Final XGB config chosen as rank 2 for stability (rank 1 had min_best_round=2, indicating unstable convergence)
 """
 

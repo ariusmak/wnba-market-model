@@ -1,0 +1,3 @@
+model,edge_min,norm_min,n_trades,hit_rate,mean_edge,total_fees,total_pnl,roi,median_lead_h
+full_model,0.15,0.25,59,0.5254,0.1919,2.82,21.32,0.3614,13.5
+elo,0.15,0.25,68,0.3971,0.1872,3.6,18.88,0.2777,13.6
